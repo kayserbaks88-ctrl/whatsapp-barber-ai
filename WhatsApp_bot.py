@@ -6,6 +6,13 @@ from zoneinfo import ZoneInfo
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
+app = Flask(__name__)   # ✅ MUST BE GLOBAL (NOT inside function)
+
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    return "OK"
+
+
 from llm_helper import llm_extract
 from calendar_helper import is_free, create_booking
 
