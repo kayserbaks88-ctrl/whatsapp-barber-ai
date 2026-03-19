@@ -62,7 +62,8 @@ def whatsapp():
 
     time = time.astimezone(TIMEZONE)
 
-    end_time = time + dateparser.timedelta(minutes=30)
+    end_time = time + timedelta(minutes=30)
+
 
     if not is_free(time, end_time):
 
