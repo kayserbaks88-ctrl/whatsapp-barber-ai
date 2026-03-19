@@ -1,43 +1,48 @@
 import os
-import json
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-PROMPT = """
-You are a booking assistant for a barbershop.
+def llm_extract(message: str):
+    prompt = f"""
+You are an AI receptionist for a barbershop.
 
-Extract booking information from the message.
+Extract structured data from the message.
 
-Return ONLY JSON.
+Message:
+"{message}"
 
-Fields:
-intent: book | cancel | other
-service: haircut | beard | other
-when_text: natural language time mentioned
+Return ONLY JSON with:
+- intent (book, cancel, question, greeting, other)
+- service (haircut, skin fade, beard trim, kids cut)
+- time (natural language, e.g. "tomorrow 3pm")
+- name (if provided)
+
+If not present, return null.
 
 Example:
-
-Message: I want a haircut tomorrow at 3
-Response:
-{
- "intent": "book",
- "service": "haircut",
- "when_text": "tomorrow 3pm"
-}
+User: "book kids cut tomorrow 1pm"
+Output:
+{{
+  "intent": "book",
+  "service": "kids cut",
+  "time": "tomorrow 1pm",
+  "name": null
+}}
 """
 
-def llm_extract(message):
-
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        temperature=0,
-        input=f"{PROMPT}\n\nMessage: {message}"
-    )
-
-    text = response.output[0].content[0].text
-
     try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        text = response.choices[0].message.content.strip()
+
+        import json
         return json.loads(text)
-    except:
+
+    except Exception as e:
+        print("LLM ERROR:", e)
         return {}
