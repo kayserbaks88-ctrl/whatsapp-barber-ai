@@ -155,6 +155,25 @@ def whatsapp():
     reply = resp.message()
 
     session = SESSIONS.get(number, {})
+# --- NAME STAGE ---
+    if session.get("stage") == "awaiting_name":
+        name = incoming
+        service = session.get("service", "haircut")
+        time = session.get("time")
+
+        if not check_free_safe(service, time):
+            reply.body(suggest_alt_text(service, time, session, number))
+            return str(resp)
+
+        create_booking_safe(name, service, time, number)
+
+        reply.body(f"✅ All set {name} 👌\n{service.title()} booked for {format_dt(time)} 💈")
+        SESSIONS.pop(number, None)
+        return str(resp)
+
+    # --- FALLBACK ---
+    reply.body(menu_text())
+    return str(resp)
 
     # --- SLOT SELECTION FIX ---
     if session.get("stage") == "choosing_slot":
@@ -210,26 +229,7 @@ def whatsapp():
         reply.body(ask_name_text())
         return str(resp)
 
-    # --- NAME STAGE ---
-    if session.get("stage") == "awaiting_name":
-        name = incoming
-        service = session.get("service", "haircut")
-        time = session.get("time")
-
-        if not check_free_safe(service, time):
-            reply.body(suggest_alt_text(service, time, session, number))
-            return str(resp)
-
-        create_booking_safe(name, service, time, number)
-
-        reply.body(f"✅ All set {name} 👌\n{service.title()} booked for {format_dt(time)} 💈")
-        SESSIONS.pop(number, None)
-        return str(resp)
-
-    # --- FALLBACK ---
-    reply.body(menu_text())
-    return str(resp)
-
+    
 
 @app.route("/", methods=["GET"])
 def home():
