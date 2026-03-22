@@ -13,7 +13,7 @@ from calendar_helper import is_free, create_booking
 app = Flask(__name__)
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
-BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
+BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI"))
 
 SESSIONS: dict[str, dict] = {}
 
@@ -56,6 +56,9 @@ def format_dt(dt):
 
 
 def parse_time_text(text):
+    if not text:
+        return None
+
     if "tomorrow now" in text.lower():
         return now_local() + timedelta(days=1)
 
@@ -70,6 +73,9 @@ def parse_time_text(text):
 
 
 def parse_time_from_selection(text, base_date):
+    if not base_date:
+        return None
+
     match = re.search(r"\b(\d{1,2}):?(\d{2})?\b", text)
     if not match:
         return None
@@ -83,7 +89,10 @@ def parse_time_from_selection(text, base_date):
 def menu_text():
     return (
         f"Hi 👋 Welcome to {BUSINESS_NAME} 💈\n\n"
-        "• Haircut\n• Skin Fade\n• Beard Trim\n• Kids Cut\n\n"
+        "• Haircut\n"
+        "• Skin Fade\n"
+        "• Beard Trim\n"
+        "• Kids Cut\n\n"
         "Try:\n"
         "• Book haircut tomorrow 3pm\n"
         "• Any slots after 2pm?\n"
@@ -131,7 +140,13 @@ def create_booking_safe(name, service_key, start_dt, phone):
     end_dt = start_dt + timedelta(minutes=duration)
 
     try:
-        create_booking(name=name, service=service_key, start_time=start_dt, end_time=end_dt, phone=phone)
+        create_booking(
+            name=name,
+            service=service_key,
+            start_time=start_dt,
+            end_time=end_dt,
+            phone=phone,
+        )
     except TypeError:
         create_booking(phone, service_key, start_dt)
 
@@ -155,27 +170,14 @@ def whatsapp():
     reply = resp.message()
 
     session = SESSIONS.get(number, {})
-# --- NAME STAGE ---
-    if session.get("stage") == "awaiting_name":
-        name = incoming
-        service = session.get("service", "haircut")
-        time = session.get("time")
 
-        if not check_free_safe(service, time):
-            reply.body(suggest_alt_text(service, time, session, number))
-            return str(resp)
-
-        create_booking_safe(name, service, time, number)
-
-        reply.body(f"✅ All set {name} 👌\n{service.title()} booked for {format_dt(time)} 💈")
-        SESSIONS.pop(number, None)
+    if not incoming:
+        reply.body(menu_text())
         return str(resp)
 
-    # --- FALLBACK ---
-    reply.body(menu_text())
-    return str(resp)
+    text_low = incoming.lower()
 
-    # --- SLOT SELECTION FIX ---
+    # --- SLOT SELECTION ---
     if session.get("stage") == "choosing_slot":
         base = session.get("requested_time")
         chosen = parse_time_from_selection(incoming, base)
@@ -193,18 +195,48 @@ def whatsapp():
             reply.body("That slot just got taken 😅 try another one?")
             return str(resp)
 
-    # --- GREETING ---
-    if incoming.lower() in {"hi", "hello", "hey"}:
+    # --- NAME STAGE ---
+    if session.get("stage") == "awaiting_name":
+        name = incoming
+        service = session.get("service", "haircut")
+        time = session.get("time")
+
+        if not time:
+            session["stage"] = "awaiting_time"
+            SESSIONS[number] = session
+            reply.body(f"What time would you like your {service}? ⏰")
+            return str(resp)
+
+        if not check_free_safe(service, time):
+            reply.body(suggest_alt_text(service, time, session, number))
+            return str(resp)
+
+        create_booking_safe(name, service, time, number)
+
+        reply.body(f"✅ All set {name} 👌\n{service.title()} booked for {format_dt(time)} 💈")
+        SESSIONS.pop(number, None)
+        return str(resp)
+
+    # --- GREETING / MENU / THANKS ---
+    if text_low in {"hi", "hello", "hey"}:
         reply.body(menu_text())
+        return str(resp)
+
+    if text_low in {"menu", "services"}:
+        reply.body(menu_text())
+        return str(resp)
+
+    if "thank" in text_low:
+        reply.body("You're welcome! 💈 See you soon 👊🏾")
         return str(resp)
 
     # --- LLM ---
     try:
         data = llm_extract(incoming) or {}
-    except:
+    except Exception:
         data = {}
 
-    intent = (data.get("intent") or "").lower()
+    intent = (data.get("intent") or "").lower().strip()
     service = normalize_service(data.get("service")) or normalize_service(incoming) or "haircut"
     parsed_time = parse_time_text(data.get("time") or incoming)
 
@@ -225,11 +257,13 @@ def whatsapp():
         session["time"] = parsed_time
         session["stage"] = "awaiting_name"
         SESSIONS[number] = session
-
         reply.body(ask_name_text())
         return str(resp)
 
-    
+    # --- FALLBACK ---
+    reply.body(menu_text())
+    return str(resp)
+
 
 @app.route("/", methods=["GET"])
 def home():
