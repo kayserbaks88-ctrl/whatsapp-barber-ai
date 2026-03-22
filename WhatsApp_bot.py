@@ -214,7 +214,14 @@ def whatsapp():
 
         create_booking_safe(name, service, time, number)
 
-        reply.body(f"✅ All set {name} 👌\n{service.title()} booked for {format_dt(time)} 💈")
+        reply.body(
+            f"✅ All set {name} 👌\n"
+            f"{service.title()} booked for {format_dt(time)} 💈\n\n"
+            "You can also:\n"
+            "• Cancel booking\n"
+            "• Reschedule\n"
+            "• Book another service"
+        )
         SESSIONS.pop(number, None)
         return str(resp)
 
@@ -238,9 +245,10 @@ def whatsapp():
         data = {}
 
     intent = (data.get("intent") or "").lower().strip()
-    service = normalize_service(data.get("service")) or normalize_service(incoming) or "haircut"
+    if not service:
+        service = session.get("service") or "haircut"
     parsed_time = parse_time_text(data.get("time") or incoming)
-
+    
     # --- BOOKING FLOW ---
     if intent == "book" or service:
         if not parsed_time:
