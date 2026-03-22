@@ -13,7 +13,8 @@ from calendar_helper import is_free, create_booking
 app = Flask(__name__)
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
-BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI"))
+BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
+
 
 SESSIONS: dict[str, dict] = {}
 
