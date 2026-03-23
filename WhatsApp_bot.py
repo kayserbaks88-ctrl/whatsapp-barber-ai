@@ -3,281 +3,437 @@ import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import dateparser
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
-from llm_helper import llm_extract
-from calendar_helper import is_free, create_booking
+from calendar_helper import get_available_slots, create_booking
 
 app = Flask(__name__)
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
 
-
-SESSIONS: dict[str, dict] = {}
-
+# =========================
+# SERVICES
+# =========================
 SERVICES = {
-    "haircut": {"label": "Haircut", "duration": 30},
-    "skin fade": {"label": "Skin Fade", "duration": 30},
-    "beard trim": {"label": "Beard Trim", "duration": 20},
-    "kids cut": {"label": "Kids Cut", "duration": 30},
+    "haircut": {"label": "Haircut", "duration": 30, "price": 18},
+    "skin fade": {"label": "Skin Fade", "duration": 45, "price": 22},
+    "beard trim": {"label": "Beard Trim", "duration": 20, "price": 12},
+    "shape up": {"label": "Shape Up", "duration": 20, "price": 10},
+    "kids cut": {"label": "Kids Cut", "duration": 30, "price": 15},
 }
 
 SERVICE_ALIASES = {
+    "1": "haircut",
+    "2": "skin fade",
+    "3": "beard trim",
+    "4": "shape up",
+    "5": "kids cut",
     "haircut": "haircut",
-    "trim": "haircut",
     "cut": "haircut",
+    "trim": "haircut",
     "skin fade": "skin fade",
     "fade": "skin fade",
     "beard": "beard trim",
     "beard trim": "beard trim",
+    "shape up": "shape up",
+    "line up": "shape up",
     "kids": "kids cut",
     "kids cut": "kids cut",
 }
 
+# =========================
+# BARBERS
+# Put real calendar IDs in .env
+# =========================
+BARBERS = {
+    "mike": {
+        "name": "Mike",
+        "calendar_id": os.getenv("BARBER_MIKE_CALENDAR_ID", ""),
+        "working_days": [0, 1, 2, 3, 4, 5],  # Mon-Sat
+        "start_hour": 9,
+        "end_hour": 18,
+        "services": ["haircut", "skin fade", "beard trim", "shape up", "kids cut"],
+    },
+    "jay": {
+        "name": "Jay",
+        "calendar_id": os.getenv("BARBER_JAY_CALENDAR_ID", ""),
+        "working_days": [0, 1, 2, 3, 4, 5],  # Mon-Sat
+        "start_hour": 10,
+        "end_hour": 19,
+        "services": ["haircut", "skin fade", "beard trim", "shape up"],
+    },
+}
 
-def now_local():
-    return datetime.now(TIMEZONE)
+BARBER_ALIASES = {
+    "1": "mike",
+    "2": "jay",
+    "3": "any",
+    "mike": "mike",
+    "jay": "jay",
+    "any": "any",
+    "any barber": "any",
+    "first available": "any",
+    "whoever": "any",
+}
+
+SESSIONS: dict[str, dict] = {}
 
 
-def normalize_service(text):
-    if not text:
-        return None
-    low = text.lower()
-    for key, value in SERVICE_ALIASES.items():
-        if key in low:
-            return value
+# =========================
+# HELPERS
+# =========================
+def clean_text(text: str) -> str:
+    text = text.strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def get_session(phone: str) -> dict:
+    if phone not in SESSIONS:
+        SESSIONS[phone] = {
+            "state": "idle",
+            "service_key": None,
+            "barber_key": None,
+            "offered_slots": [],
+            "selected_slot": None,
+            "customer_name": None,
+        }
+    return SESSIONS[phone]
+
+
+def reset_session(phone: str):
+    SESSIONS[phone] = {
+        "state": "idle",
+        "service_key": None,
+        "barber_key": None,
+        "offered_slots": [],
+        "selected_slot": None,
+        "customer_name": None,
+    }
+
+
+def service_menu() -> str:
+    lines = [f"💈 Welcome to {BUSINESS_NAME}", "", "Choose a service:"]
+    for i, (key, item) in enumerate(SERVICES.items(), start=1):
+        lines.append(f"{i}. {item['label']} - £{item['price']}")
+    lines.append("")
+    lines.append("Reply with the number or service name.")
+    return "\n".join(lines)
+
+
+def barber_menu(service_key: str) -> str:
+    lines = ["✂️ Choose your barber:"]
+    available = []
+
+    idx = 1
+    for barber_key, barber in BARBERS.items():
+        if service_key in barber["services"] and barber["calendar_id"]:
+            lines.append(f"{idx}. {barber['name']}")
+            available.append(barber_key)
+            idx += 1
+
+    lines.append(f"{idx}. First available")
+    lines.append("")
+    lines.append("Reply with the number or name.")
+    return "\n".join(lines)
+
+
+def parse_service(user_text: str) -> str | None:
+    return SERVICE_ALIASES.get(clean_text(user_text))
+
+
+def get_barber_options_for_service(service_key: str) -> list[str]:
+    result = []
+    for barber_key, barber in BARBERS.items():
+        if service_key in barber["services"] and barber["calendar_id"]:
+            result.append(barber_key)
+    return result
+
+
+def parse_barber(user_text: str, service_key: str) -> str | None:
+    text = clean_text(user_text)
+
+    available_barbers = get_barber_options_for_service(service_key)
+    numbered_map = {}
+    num = 1
+    for barber_key in available_barbers:
+        numbered_map[str(num)] = barber_key
+        num += 1
+    numbered_map[str(num)] = "any"
+
+    if text in numbered_map:
+        return numbered_map[text]
+
+    mapped = BARBER_ALIASES.get(text)
+    if mapped == "any":
+        return "any"
+    if mapped in available_barbers:
+        return mapped
+
     return None
 
 
-def format_dt(dt):
-    return dt.astimezone(TIMEZONE).strftime("%A %H:%M")
+def format_slots(slot_items: list[dict]) -> str:
+    lines = ["📅 Here are the next available slots:"]
+    for i, item in enumerate(slot_items, start=1):
+        slot_dt = item["slot"]
+        barber_name = item["barber_name"]
+        lines.append(
+            f"{i}. {slot_dt.strftime('%a %d %b at %I:%M %p')} - {barber_name}"
+        )
+    lines.append("")
+    lines.append("Reply with the slot number.")
+    return "\n".join(lines)
 
 
-def parse_time_text(text):
-    if not text:
-        return None
+def build_slots_for_selected_barber(service_key: str, barber_key: str) -> list[dict]:
+    service = SERVICES[service_key]
+    barber = BARBERS[barber_key]
 
-    if "tomorrow now" in text.lower():
-        return now_local() + timedelta(days=1)
-
-    return dateparser.parse(
-        text,
-        settings={
-            "TIMEZONE": str(TIMEZONE),
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DATES_FROM": "future",
-        },
+    slots = get_available_slots(
+        calendar_id=barber["calendar_id"],
+        duration_minutes=service["duration"],
+        days_ahead=7,
+        start_hour=barber["start_hour"],
+        end_hour=barber["end_hour"],
+        slot_step_minutes=15,
+        working_days=barber["working_days"],
+        limit=5,
     )
 
+    return [
+        {
+            "slot": slot,
+            "barber_key": barber_key,
+            "barber_name": barber["name"],
+        }
+        for slot in slots
+    ]
 
-def parse_time_from_selection(text, base_date):
-    if not base_date:
+
+def build_slots_for_any_barber(service_key: str) -> list[dict]:
+    service = SERVICES[service_key]
+    all_slots: list[dict] = []
+
+    for barber_key in get_barber_options_for_service(service_key):
+        barber = BARBERS[barber_key]
+        slots = get_available_slots(
+            calendar_id=barber["calendar_id"],
+            duration_minutes=service["duration"],
+            days_ahead=7,
+            start_hour=barber["start_hour"],
+            end_hour=barber["end_hour"],
+            slot_step_minutes=15,
+            working_days=barber["working_days"],
+            limit=5,
+        )
+        for slot in slots:
+            all_slots.append(
+                {
+                    "slot": slot,
+                    "barber_key": barber_key,
+                    "barber_name": barber["name"],
+                }
+            )
+
+    all_slots.sort(key=lambda x: x["slot"])
+    return all_slots[:5]
+
+
+def parse_slot_choice(user_text: str, offered_slots: list[dict]) -> dict | None:
+    text = clean_text(user_text)
+    if not text.isdigit():
         return None
 
-    match = re.search(r"\b(\d{1,2}):?(\d{2})?\b", text)
-    if not match:
-        return None
-
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
-
-    return base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    idx = int(text) - 1
+    if 0 <= idx < len(offered_slots):
+        return offered_slots[idx]
+    return None
 
 
-def menu_text():
-    return (
-        f"Hi 👋 Welcome to {BUSINESS_NAME} 💈\n\n"
-        "• Haircut\n"
-        "• Skin Fade\n"
-        "• Beard Trim\n"
-        "• Kids Cut\n\n"
-        "Try:\n"
-        "• Book haircut tomorrow 3pm\n"
-        "• Any slots after 2pm?\n"
-        "• Menu\n"
-        "• Cancel booking"
-    )
+def is_cancel_text(text: str) -> bool:
+    return clean_text(text) in {"cancel", "stop", "menu", "restart"}
 
 
-def ask_name_text():
-    return "Perfect 👌 what name should I book it under?"
-
-
-def suggest_alt_text(service_key, requested, session, number):
-    duration = SERVICES.get(service_key, {"duration": 30})["duration"]
-    options = []
-
-    for mins in (30, 60, 90):
-        candidate = requested + timedelta(minutes=mins)
-        end = candidate + timedelta(minutes=duration)
-
-        try:
-            free = is_free(candidate, end)
-        except TypeError:
-            free = is_free(candidate)
-
-        if free:
-            options.append(candidate.strftime("%H:%M"))
-
-    if options:
-        session["stage"] = "choosing_slot"
-        session["requested_time"] = requested
-        SESSIONS[number] = session
-
-        return (
-            f"That slot is taken 😬\n"
-            f"Next available options: {', '.join(options)}\n"
-            "Which one would you like?"
-        )
-
-    return "That slot is taken 😬 Try another time?"
-
-
-def create_booking_safe(name, service_key, start_dt, phone):
-    duration = SERVICES.get(service_key, {"duration": 30})["duration"]
-    end_dt = start_dt + timedelta(minutes=duration)
-
-    try:
-        create_booking(
-            name=name,
-            service=service_key,
-            start_time=start_dt,
-            end_time=end_dt,
-            phone=phone,
-        )
-    except TypeError:
-        create_booking(phone, service_key, start_dt)
-
-
-def check_free_safe(service_key, start_dt):
-    duration = SERVICES.get(service_key, {"duration": 30})["duration"]
-    end_dt = start_dt + timedelta(minutes=duration)
-
-    try:
-        return is_free(start_dt, end_dt)
-    except TypeError:
-        return is_free(start_dt)
-
-
+# =========================
+# WEBHOOK
+# =========================
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    incoming = request.values.get("Body", "").strip()
-    number = request.values.get("From", "").strip()
+    incoming_msg = request.values.get("Body", "").strip()
+    from_number = request.values.get("From", "").strip()
 
     resp = MessagingResponse()
-    reply = resp.message()
+    msg = resp.message()
 
-    session = SESSIONS.get(number, {})
+    session = get_session(from_number)
+    text = clean_text(incoming_msg)
 
-    if not incoming:
-        reply.body(menu_text())
+    if not incoming_msg:
+        msg.body(service_menu())
+        session["state"] = "awaiting_service"
         return str(resp)
 
-    text_low = incoming.lower()
+    if is_cancel_text(text):
+        reset_session(from_number)
+        session = get_session(from_number)
+        session["state"] = "awaiting_service"
+        msg.body("✅ Booking flow reset.\n\n" + service_menu())
+        return str(resp)
 
-    # --- SLOT SELECTION ---
-    if session.get("stage") == "choosing_slot":
-        base = session.get("requested_time")
-        chosen = parse_time_from_selection(incoming, base)
-
-        if chosen:
-            service = session.get("service", "haircut")
-
-            if check_free_safe(service, chosen):
-                session["time"] = chosen
-                session["stage"] = "awaiting_name"
-                SESSIONS[number] = session
-                reply.body(ask_name_text())
-                return str(resp)
-
-            reply.body("That slot just got taken 😅 try another one?")
+    # -------------------------
+    # Start flow from idle
+    # -------------------------
+    if session["state"] == "idle":
+        service_key = parse_service(incoming_msg)
+        if service_key:
+            session["service_key"] = service_key
+            session["state"] = "awaiting_barber"
+            msg.body(
+                f"✅ Service selected: {SERVICES[service_key]['label']}\n\n"
+                + barber_menu(service_key)
+            )
             return str(resp)
 
-    # --- NAME STAGE ---
-    if session.get("stage") == "awaiting_name":
-        name = incoming
-        service = session.get("service", "haircut")
-        time = session.get("time")
+        session["state"] = "awaiting_service"
+        msg.body(service_menu())
+        return str(resp)
 
-        if not time:
-            session["stage"] = "awaiting_time"
-            SESSIONS[number] = session
-            reply.body(f"What time would you like your {service}? ⏰")
+    # -------------------------
+    # Awaiting service
+    # -------------------------
+    if session["state"] == "awaiting_service":
+        service_key = parse_service(incoming_msg)
+        if not service_key:
+            msg.body(
+                "Sorry, I didn’t catch that service.\n\n"
+                + service_menu()
+            )
             return str(resp)
 
-        if not check_free_safe(service, time):
-            reply.body(suggest_alt_text(service, time, session, number))
-            return str(resp)
+        session["service_key"] = service_key
+        session["state"] = "awaiting_barber"
 
-        create_booking_safe(name, service, time, number)
-
-        reply.body(
-            f"✅ All set {name} 👌\n"
-            f"{service.title()} booked for {format_dt(time)} 💈\n\n"
-            "You can also:\n"
-            "• Cancel booking\n"
-            "• Reschedule\n"
-            "• Book another service"
+        msg.body(
+            f"✅ Service selected: {SERVICES[service_key]['label']}\n\n"
+            + barber_menu(service_key)
         )
-        SESSIONS.pop(number, None)
         return str(resp)
 
-    # --- GREETING / MENU / THANKS ---
-    if text_low in {"hi", "hello", "hey"}:
-        reply.body(menu_text())
-        return str(resp)
+    # -------------------------
+    # Awaiting barber
+    # -------------------------
+    if session["state"] == "awaiting_barber":
+        service_key = session["service_key"]
+        barber_choice = parse_barber(incoming_msg, service_key)
 
-    if text_low in {"menu", "services"}:
-        reply.body(menu_text())
-        return str(resp)
-
-    if "thank" in text_low:
-        reply.body("You're welcome! 💈 See you soon 👊🏾")
-        return str(resp)
-
-    # --- LLM ---
-    try:
-        data = llm_extract(incoming) or {}
-    except Exception:
-        data = {}
-
-    intent = (data.get("intent") or "").lower().strip()
-    if not service:
-        service = session.get("service") or "haircut"
-    parsed_time = parse_time_text(data.get("time") or incoming)
-    
-    # --- BOOKING FLOW ---
-    if intent == "book" or service:
-        if not parsed_time:
-            session["service"] = service
-            session["stage"] = "awaiting_time"
-            SESSIONS[number] = session
-            reply.body(f"What time would you like your {service}? ⏰")
+        if not barber_choice:
+            msg.body(
+                "Sorry, I didn’t catch the barber choice.\n\n"
+                + barber_menu(service_key)
+            )
             return str(resp)
 
-        if not check_free_safe(service, parsed_time):
-            reply.body(suggest_alt_text(service, parsed_time, session, number))
+        session["barber_key"] = barber_choice
+
+        if barber_choice == "any":
+            offered_slots = build_slots_for_any_barber(service_key)
+        else:
+            offered_slots = build_slots_for_selected_barber(service_key, barber_choice)
+
+        if not offered_slots:
+            msg.body(
+                "😕 No available slots found for that selection in the next 7 days.\n"
+                "Reply 'menu' to start again."
+            )
             return str(resp)
 
-        session["service"] = service
-        session["time"] = parsed_time
-        session["stage"] = "awaiting_name"
-        SESSIONS[number] = session
-        reply.body(ask_name_text())
+        session["offered_slots"] = offered_slots
+        session["state"] = "awaiting_slot"
+
+        msg.body(format_slots(offered_slots))
         return str(resp)
 
-    # --- FALLBACK ---
-    reply.body(menu_text())
+    # -------------------------
+    # Awaiting slot
+    # -------------------------
+    if session["state"] == "awaiting_slot":
+        selected = parse_slot_choice(incoming_msg, session["offered_slots"])
+
+        if not selected:
+            msg.body(
+                "Please reply with a valid slot number.\n\n"
+                + format_slots(session["offered_slots"])
+            )
+            return str(resp)
+
+        session["selected_slot"] = selected
+        session["state"] = "awaiting_name"
+
+        msg.body(
+            f"✅ Slot selected: {selected['slot'].strftime('%a %d %b at %I:%M %p')} "
+            f"with {selected['barber_name']}\n\n"
+            "Please reply with your name."
+        )
+        return str(resp)
+
+    # -------------------------
+    # Awaiting name
+    # -------------------------
+    if session["state"] == "awaiting_name":
+        customer_name = incoming_msg.strip()
+        if len(customer_name) < 2:
+            msg.body("Please enter a valid name.")
+            return str(resp)
+
+        selected = session["selected_slot"]
+        service_key = session["service_key"]
+        service = SERVICES[service_key]
+
+        start_dt = selected["slot"]
+        end_dt = start_dt + timedelta(minutes=service["duration"])
+
+        barber_key = selected["barber_key"]
+        barber = BARBERS[barber_key]
+
+        created = create_booking(
+            calendar_id=barber["calendar_id"],
+            customer_name=customer_name,
+            customer_phone=from_number,
+            service_name=service["label"],
+            start_dt=start_dt,
+            end_dt=end_dt,
+            barber_name=barber["name"],
+        )
+
+        reset_session(from_number)
+
+        event_link = created.get("htmlLink", "")
+        confirmation = (
+            f"✅ Booking confirmed!\n\n"
+            f"Name: {customer_name}\n"
+            f"Service: {service['label']}\n"
+            f"Barber: {barber['name']}\n"
+            f"Time: {start_dt.strftime('%a %d %b at %I:%M %p')}\n"
+        )
+
+        if event_link:
+            confirmation += f"\nCalendar link:\n{event_link}\n"
+
+        confirmation += "\nReply 'menu' to book another appointment."
+
+        msg.body(confirmation)
+        return str(resp)
+
+    # fallback
+    reset_session(from_number)
+    session = get_session(from_number)
+    session["state"] = "awaiting_service"
+    msg.body(service_menu())
     return str(resp)
 
 
-@app.route("/", methods=["GET"])
-def home():
-    return "TrimTech AI is live", 200
-
 if __name__ == "__main__":
-    port = int(os.evniron.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
