@@ -1,55 +1,60 @@
-import os
-import json
 from openai import OpenAI
+import os
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """
-You are a smart, friendly AI receptionist for a barber shop.
+You are a smart WhatsApp barber booking assistant.
 
-Understand the user message and return ONLY JSON.
+You understand natural language and extract intent.
 
-Intents:
-- menu
+Return JSON only.
+
+Possible intents:
 - book
-- choose_service
-- choose_barber
-- choose_time
-- cancel
 - reschedule
-- change_barber
-- smalltalk
+- cancel
+- availability
+- greeting
+- thanks
 - unknown
 
-Return format:
-{
-  "intent": "...",
-  "service": "...",
-  "barber": "...",
-  "time": "...",
-  "name": "..."
-}
+Extract:
+- service
+- barber
+- time (natural text)
 
-Rules:
-- Be flexible with spelling (e.g. 'milk' → 'mike')
-- Extract meaning, not exact words
-- If user says thanks/ok → smalltalk
-- If unsure → intent = unknown
+Examples:
+
+User: "book haircut tomorrow 3pm"
+→ {"intent":"book","service":"haircut","time":"tomorrow 3pm"}
+
+User: "cancel my booking"
+→ {"intent":"cancel"}
+
+User: "any slots after 2?"
+→ {"intent":"availability","time":"after 2pm"}
+
+User: "thanks"
+→ {"intent":"thanks"}
+
+User: "hi"
+→ {"intent":"greeting"}
 """
 
-def llm_extract(text):
+def llm_extract(text: str):
     try:
-        res = client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": text}
             ],
-            temperature=0.2
+            temperature=0
         )
 
-        content = res.choices[0].message.content
-        return json.loads(content)
+        return eval(response.choices[0].message.content)
 
-    except:
+    except Exception as e:
+        print("LLM ERROR:", e)
         return {"intent": "unknown"}
