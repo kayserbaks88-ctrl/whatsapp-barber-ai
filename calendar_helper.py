@@ -94,31 +94,44 @@ def get_available_slots(
 # CREATE BOOKING
 # =========================
 def create_booking(
-    calendar_id: str,
-    customer_name: str,
-    customer_phone: str,
+    phone: str,
     service_name: str,
     start_dt: datetime,
-    end_dt: datetime,
-    barber_name: str,
+    minutes: int = 30,
+    name: str = None,
+    barber_name: str = "Barber",
+    calendar_id: str = None,
 ) -> dict:
+    from datetime import timedelta
+
+    end_dt = start_dt + timedelta(minutes=minutes)
 
     event = {
-        "summary": f"{service_name} - {customer_name}",
-        "description": (
-            f"Customer: {customer_name}\n"
-            f"Phone: {customer_phone}\n"
-            f"Service: {service_name}\n"
-            f"Barber: {barber_name}"
-        ),
+        "summary": f"{service_name} - {name or 'Client'}",
+        "description": f"""
+Customer: {name}
+Phone: {phone}
+Service: {service_name}
+Barber: {barber_name}
+        """,
         "start": {
-            "dateTime": start_dt.astimezone(TIMEZONE).isoformat(),
-            "timeZone": str(TIMEZONE),
+            "dateTime": start_dt.isoformat(),
+            "timeZone": "Europe/London",
         },
         "end": {
-            "dateTime": end_dt.astimezone(TIMEZONE).isoformat(),
-            "timeZone": str(TIMEZONE),
+            "dateTime": end_dt.isoformat(),
+            "timeZone": "Europe/London",
         },
+    }
+
+    created_event = service.events().insert(
+        calendarId=calendar_id,
+        body=event
+    ).execute()
+
+    return {
+        "event_id": created_event.get("id"),
+        "link": created_event.get("htmlLink"),
     }
 
     created_event = (
