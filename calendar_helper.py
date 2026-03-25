@@ -92,17 +92,33 @@ def list_upcoming(phone: str):
 # =========================
 # CANCEL BOOKING
 # =========================
+def list_upcoming(phone: str):
+    events = service.events().list(
+        calendarId=os.getenv("GOOGLE_CALENDAR_ID"),
+        maxResults=10,
+        singleEvents=True,
+        orderBy="startTime"
+    ).execute().get("items", [])
+
+    results = []
+
+    for e in events:
+        if e.get("description") and phone in e["description"]:
+            results.append({
+                "id": e["id"],
+                "start": e["start"]["dateTime"],
+                "service": e["summary"],
+            })
+
+    return results
+
+
 def cancel_booking(event_id: str):
-    for barber in BARBERS.values():
-        calendar_id = barber["calendar_id"]
-
-        try:
-            service.events().delete(
-                calendarId=calendar_id,
-                eventId=event_id
-            ).execute()
-            return True
-        except:
-            continue
-
-    return False
+    try:
+        service.events().delete(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID"),
+            eventId=event_id
+        ).execute()
+        return True
+    except:
+        return False
