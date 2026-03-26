@@ -205,6 +205,7 @@ def whatsapp():
             start_dt=dt,
             minutes=30,
             name=profile_name or "Guest",
+            barber=session.get("barber") or list(BARBERS.values())[0]  # ✅ ADD HERE
         )
 
         session.clear()

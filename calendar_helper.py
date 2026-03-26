@@ -65,25 +65,28 @@ def create_booking(phone, service_name, start_dt, minutes=30, name="Guest"):
 # ==============================
 # LIST BOOKINGS
 # ==============================
-def list_upcoming(phone: str):
-    events = service.events().list(
-        calendarId=CALENDAR_ID,
-        maxResults=10,
-        singleEvents=True,
-        orderBy="startTime"
-    ).execute().get("items", [])
+def create_booking(phone, service_name, start_dt, minutes=30, name="Guest", barber=None):
+    end_dt = start_dt + timedelta(minutes=minutes)
 
-    results = []
+    # 🔥 ALWAYS use barber calendar
+    calendar_id = barber["calendar_id"]
 
-    for e in events:
-        if e.get("description") and phone in e["description"]:
-            results.append({
-                "id": e["id"],
-                "start": e["start"]["dateTime"],
-                "service": e["summary"],
-            })
+    event = {
+        "summary": service_name,
+        "description": f"Customer: {name} | Phone: {phone}",
+        "start": {"dateTime": start_dt.isoformat(), "timeZone": str(TIMEZONE)},
+        "end": {"dateTime": end_dt.isoformat(), "timeZone": str(TIMEZONE)},
+    }
 
-    return results
+    created_event = service.events().insert(
+        calendarId=calendar_id,
+        body=event
+    ).execute()
+
+    return {
+        "id": created_event["id"],
+        "link": created_event.get("htmlLink")
+    }
 
 
 # ==============================
