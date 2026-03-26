@@ -227,6 +227,24 @@ def whatsapp():
 
         msg.body(f"Nice 👌 booking a *{service['label']}*.\nAny barber preference?")
         return str(resp)
+        session["awaiting_barber"] = True
+        
+    # ================================
+    # HANDLE BARBER SELECTION
+    # ================================
+    if session.get("awaiting_barber"):
+        text_lower = text.lower().strip()
+
+        if text_lower in BARBERS:
+            session["barber"] = text_lower   # ✅ THIS FIXES EVERYTHING
+            session["awaiting_barber"] = False
+
+            msg.body("Perfect 👍 what time works for you?")
+            return str(resp)
+
+        else:
+            msg.body("Please choose a valid barber 🙏")
+            return str(resp)
 
     # BARBER
     if "service" in session and "barber" not in session:
