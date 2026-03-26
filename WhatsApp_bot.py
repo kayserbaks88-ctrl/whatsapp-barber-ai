@@ -208,7 +208,7 @@ def whatsapp():
             barber=session.get("barber") or list(BARBERS.values())[0]  # ✅ ADD HERE
         )
 
-        session.clear()
+        SESSIONS.pop(from_number, None)
 
         msg.body("🔁 Done! Your booking has been updated 👍")
         return str(resp)
