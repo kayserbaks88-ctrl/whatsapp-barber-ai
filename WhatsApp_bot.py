@@ -54,10 +54,17 @@ def whatsapp():
     # =========================
     # SERVICE DETECTION
     # =========================
-    if text_lower in SERVICES:
-        session["service"] = text_lower
+    matched_service = None
+
+    for key in SERVICES:
+        if key in text_lower:
+            matched_service = key
+            break
+
+    if matched_service:
+        session["service"] = matched_service
         session["awaiting_barber"] = True
-        msg.body(f"Nice 👌 booking a {SERVICES[text_lower]['label']}.\nAny barber preference?")
+        msg.body(f"Nice 👌 booking a {SERVICES[matched_service]['label']}.\nAny barber preference?")
         return str(resp)
 
     # =========================
