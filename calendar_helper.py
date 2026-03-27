@@ -15,12 +15,12 @@ service = build("calendar", "v3", credentials=creds)
 BARBERS = {
     "jay": {
         "name": "Jay",
-        "calendar_id": os.getenv("JAY_CALENDAR_ID")
+        "calendar_id": os.getenv("BARBER_JAY_CALENDAR_ID"),
     },
     "mike": {
         "name": "Mike",
-        "calendar_id": os.getenv("MIKE_CALENDAR_ID")
-    }
+        "calendar_id": os.getenv("BARBER_MIKE_CALENDAR_ID"),
+    },
 }
 
 def is_free(start_dt, end_dt, barber):
