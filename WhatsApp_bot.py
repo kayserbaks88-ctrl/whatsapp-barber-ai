@@ -6,30 +6,17 @@ import dateparser
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
-from calendar_helper import (
-    is_free,
-    create_booking,
-    list_upcoming,
-    cancel_booking,
-    BARBERS
-)
+from llm_helper import llm_extract
+from calendar_helper import is_free, create_booking, BARBERS
 
 app = Flask(__name__)
 
-TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
-
-SESSIONS = {}
+TIMEZONE = ZoneInfo("Europe/London")
 
 SERVICES = {
     "haircut": {"label": "Haircut", "duration": 30},
     "beard trim": {"label": "Beard Trim", "duration": 20},
 }
-
-def get_session(phone):
-    if phone not in SESSIONS:
-        SESSIONS[phone] = {}
-    return SESSIONS[phone]
-
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
@@ -37,53 +24,36 @@ def whatsapp():
     text = request.values.get("Body", "").strip()
     profile_name = request.values.get("ProfileName", "Guest")
 
-    session = get_session(from_number)
-
     resp = MessagingResponse()
     msg = resp.message()
 
-    text_lower = text.lower()
+    data = llm_extract(text)
+
+    intent = data.get("intent")
+    service_key = data.get("service")
+    barber_key = data.get("barber")
+    when_text = data.get("when_text")
+    name = data.get("name") or profile_name
 
     # =========================
-    # START
+    # BOOKING FLOW
     # =========================
-    if not session:
-        msg.body("Hey 👋 what can I book for you?")
-        return str(resp)
+    if intent == "book":
 
-    # =========================
-    # SERVICE DETECTION
-    # =========================
-    matched_service = None
-
-    for key in SERVICES:
-        if key in text_lower:
-            matched_service = key
-            break
-
-    if matched_service:
-        session["service"] = matched_service
-        session["awaiting_barber"] = True
-        msg.body(f"Nice 👌 booking a {SERVICES[matched_service]['label']}.\nAny barber preference?")
-        return str(resp)
-
-    # =========================
-    # BARBER
-    # =========================
-    if session.get("awaiting_barber"):
-        if text_lower in BARBERS:
-            session["barber"] = BARBERS[text_lower]
-            session["awaiting_barber"] = False
-            session["awaiting_time"] = True
-            msg.body("Perfect 👍 what time works for you?")
+        if not service_key or service_key not in SERVICES:
+            msg.body("What would you like to book? ✂️")
             return str(resp)
 
-    # =========================
-    # TIME
-    # =========================
-    if session.get("awaiting_time"):
+        if not barber_key or barber_key not in BARBERS:
+            msg.body("Which barber would you like? (Jay or Mike)")
+            return str(resp)
+
+        if not when_text:
+            msg.body("What time works for you? ⏰")
+            return str(resp)
+
         dt = dateparser.parse(
-            text,
+            when_text,
             settings={
                 "TIMEZONE": "Europe/London",
                 "RETURN_AS_TIMEZONE_AWARE": True,
@@ -92,16 +62,16 @@ def whatsapp():
         )
 
         if not dt:
-            msg.body("Didn’t catch that time 🤔 try like 'tomorrow 3pm'")
+            msg.body("I didn’t catch that time 🤔 try 'tomorrow 3pm'")
             return str(resp)
 
-        service = SERVICES[session["service"]]
-        barber = session["barber"]
+        service = SERVICES[service_key]
+        barber = BARBERS[barber_key]
 
         end_dt = dt + timedelta(minutes=service["duration"])
 
         if not is_free(dt, end_dt, barber):
-            msg.body("That slot’s taken 😬 try another time")
+            msg.body("That slot is taken 😬 try another time")
             return str(resp)
 
         result = create_booking(
@@ -109,11 +79,9 @@ def whatsapp():
             service_name=service["label"],
             start_dt=dt,
             minutes=service["duration"],
-            name=profile_name,
+            name=name,
             barber=barber,
         )
-
-        session.clear()
 
         msg.body(
             f"✅ Booked!\n"
@@ -125,9 +93,9 @@ def whatsapp():
         return str(resp)
 
     # =========================
-    # DEFAULT
+    # FALLBACK
     # =========================
-    msg.body("Hey 👋 what can I book for you?")
+    msg.body("Hey 👋 just tell me what you want like:\n'Book haircut with Jay tomorrow at 3pm'")
     return str(resp)
 
 

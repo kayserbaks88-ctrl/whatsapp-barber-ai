@@ -1,50 +1,28 @@
-from openai import OpenAI
 import os
+import json
+from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """
-You are a smart WhatsApp barber booking assistant.
+You are an AI booking assistant for a barber shop.
 
-You understand natural language and extract intent.
+Extract structured data from user messages.
 
-Return JSON only.
+Return ONLY valid JSON with:
 
-Possible intents:
-- book
-- reschedule
-- cancel
-- availability
-- greeting
-- thanks
-- unknown
+intent: "book", "view", "cancel", "reschedule", or "unknown"
+service: "haircut", "beard trim", etc or null
+barber: "jay", "mike", or null
+when_text: natural time text like "tomorrow 3pm" or null
+name: customer name if mentioned, else null
 
-Extract:
-- service
-- barber
-- time (natural text)
-
-Examples:
-
-User: "book haircut tomorrow 3pm"
-→ {"intent":"book","service":"haircut","time":"tomorrow 3pm"}
-
-User: "cancel my booking"
-→ {"intent":"cancel"}
-
-User: "any slots after 2?"
-→ {"intent":"availability","time":"after 2pm"}
-
-User: "thanks"
-→ {"intent":"thanks"}
-
-User: "hi"
-→ {"intent":"greeting"}
+Do not explain anything. Only JSON.
 """
 
 def llm_extract(text: str):
     try:
-        response = client.chat.completions.create(
+        res = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -53,8 +31,16 @@ def llm_extract(text: str):
             temperature=0
         )
 
-        return eval(response.choices[0].message.content)
+        content = res.choices[0].message.content.strip()
+
+        return json.loads(content)
 
     except Exception as e:
         print("LLM ERROR:", e)
-        return {"intent": "unknown"}
+        return {
+            "intent": "unknown",
+            "service": None,
+            "barber": None,
+            "when_text": None,
+            "name": None
+        }
