@@ -92,20 +92,22 @@ def whatsapp():
     # =========================
     # START RESCHEDULE
     # =========================
+    
     if "change" in text_lower or "reschedule" in text_lower or "move" in text_lower:
         bookings = list_bookings(from_number)
 
-        if not bookings:
-            msg.body("You’ve got no bookings to change 👍")
-            return str(resp)
-
-        session["reschedule_mode"] = True
-        session["reschedule_booking_id"] = bookings[0]["id"]
-
-        SESSIONS[from_number] = session
-
-        msg.body("No worries 👍 what time would you like instead?")
+    if not bookings:
+        msg.body("You've got no bookings to change 👍")
         return str(resp)
+
+    session["reschedule_mode"] = True
+    session["reschedule_booking_id"] = bookings[0]["id"]
+
+    SESSIONS[from_number] = session
+
+    msg.body("No worries 👍 what time would you like instead?")
+    return str(resp)
+        
 
     # =========================
     # HANDLE RESCHEDULE
