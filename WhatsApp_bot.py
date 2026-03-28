@@ -1,10 +1,9 @@
+from flask import Flask, request
+from twilio.twiml.messaging_response import MessagingResponse
 import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-
 import dateparser
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
 
 from llm_helper import llm_extract
 from calendar_helper import (
@@ -17,7 +16,6 @@ from calendar_helper import (
 )
 
 app = Flask(__name__)
-
 TIMEZONE = ZoneInfo("Europe/London")
 
 SESSIONS = {}
@@ -25,6 +23,7 @@ SESSIONS = {}
 SERVICES = {
     "haircut": {"label": "Haircut", "minutes": 30},
     "beard trim": {"label": "Beard Trim", "minutes": 20},
+    "kids cut": {"label": "Kids Cut", "minutes": 20},
 }
 
 
@@ -38,11 +37,10 @@ def whatsapp():
     msg = resp.message()
 
     text_lower = text.lower()
-
     session = SESSIONS.get(from_number, {})
 
     # =========================
-    # HUMAN CHAT (SAFE)
+    # HUMAN CHAT
     # =========================
     if text_lower in ["hi", "hello", "hey", "yo"]:
         msg.body("Hey 👋 what can I book for you?")
@@ -50,10 +48,6 @@ def whatsapp():
 
     if any(w in text_lower for w in ["thanks", "thank you", "cheers"]):
         msg.body("You're welcome 😊 just message anytime 👍")
-        return str(resp)
-
-    if any(w in text_lower for w in ["bye", "see you", "later"]):
-        msg.body("See you soon 👋")
         return str(resp)
 
     # =========================
@@ -66,12 +60,12 @@ def whatsapp():
             msg.body("You’ve got no bookings 👍")
             return str(resp)
 
-        text_out = "Here’s your bookings:\n\n"
+        out = "Here’s your bookings:\n\n"
         for i, b in enumerate(bookings, 1):
-            text_out += f"{i}. {b['summary']} at {b['start']}\n"
+            out += f"{i}. {b['summary']} at {b['start']}\n"
 
-        text_out += "\nReply 'cancel 1' or 'reschedule 1 tomorrow 4pm'"
-        msg.body(text_out)
+        out += "\nReply 'cancel 1' or 'reschedule 1 tomorrow 4pm'"
+        msg.body(out)
         return str(resp)
 
     # =========================
@@ -79,8 +73,8 @@ def whatsapp():
     # =========================
     if text_lower.startswith("cancel"):
         bookings = list_bookings(from_number)
-
         parts = text_lower.split()
+
         if len(parts) < 2:
             msg.body("Which booking do you want to cancel?")
             return str(resp)
@@ -92,35 +86,38 @@ def whatsapp():
             return str(resp)
 
         cancel_booking(bookings[idx]["id"])
-
-        msg.body("Done 👍 your booking has been cancelled.")
+        msg.body("Done 👍 your booking is cancelled")
         return str(resp)
 
     # =========================
-    # RESCHEDULE (SMART FLOW)
+    # START RESCHEDULE
     # =========================
     if "change" in text_lower or "reschedule" in text_lower or "move" in text_lower:
+        bookings = list_bookings(from_number)
+
+        if not bookings:
+            msg.body("You’ve got no bookings to change 👍")
+            return str(resp)
+
         session["reschedule_mode"] = True
+        session["reschedule_booking_id"] = bookings[0]["id"]
+
         SESSIONS[from_number] = session
 
         msg.body("No worries 👍 what time would you like instead?")
         return str(resp)
 
-    # If user replies with time AFTER saying change
+    # =========================
+    # HANDLE RESCHEDULE
+    # =========================
     if session.get("reschedule_mode"):
-        bookings = list_bookings(from_number)
-
-        if not bookings:
-            msg.body("You’ve got no bookings to change 👍")
-            session.pop("reschedule_mode", None)
-            return str(resp)
-
         dt = dateparser.parse(
             text,
             settings={
                 "TIMEZONE": "Europe/London",
                 "RETURN_AS_TIMEZONE_AWARE": True,
                 "PREFER_DATES_FROM": "future",
+                "RELATIVE_BASE": datetime.now(TIMEZONE),
             },
         )
 
@@ -128,16 +125,17 @@ def whatsapp():
             msg.body("Didn’t catch that time 🤔 try again")
             return str(resp)
 
-        link = reschedule_booking(bookings[0]["id"], dt, 30)
+        booking_id = session.get("reschedule_booking_id")
 
-        session.pop("reschedule_mode", None)
+        link = reschedule_booking(booking_id, dt, 30)
+
+        session.clear()
         SESSIONS[from_number] = session
 
         msg.body(
-            f"All sorted 👌 your booking is now:\n\n"
+            f"All sorted 👌 moved to:\n\n"
             f"{dt.strftime('%a %d %b at %I:%M%p')}\n\n"
-            f"{link}\n\n"
-            f"Anything else just message 👍"
+            f"{link}"
         )
         return str(resp)
 
@@ -146,8 +144,17 @@ def whatsapp():
     # =========================
     data = llm_extract(text)
 
-    if data.get("service"):
-        session["service"] = data["service"]
+    service_text = data.get("service")
+
+    if service_text:
+        service_text = service_text.lower()
+
+        if "kid" in service_text:
+            session["service"] = "kids cut"
+        elif "beard" in service_text:
+            session["service"] = "beard trim"
+        elif "hair" in service_text:
+            session["service"] = "haircut"
 
     if data.get("barber"):
         session["barber"] = data["barber"]
@@ -161,7 +168,7 @@ def whatsapp():
         session["name"] = session.get("name", profile_name)
 
     # =========================
-    # BOOKING FLOW
+    # FLOW
     # =========================
     if "service" not in session:
         msg.body("What would you like to book? ✂️")
@@ -169,10 +176,10 @@ def whatsapp():
         return str(resp)
 
     if session["service"] not in SERVICES:
-        msg.body("I can do haircut or beard trim 👍")
+        msg.body("I can do haircut, beard trim or kids cut 👍")
         return str(resp)
 
-    if "barber" not in session or session["barber"] not in BARBERS:
+    if "barber" not in session:
         msg.body("Which barber would you like? (Jay or Mike)")
         SESSIONS[from_number] = session
         return str(resp)
@@ -188,6 +195,7 @@ def whatsapp():
             "TIMEZONE": "Europe/London",
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": datetime.now(TIMEZONE),
         },
     )
 
@@ -204,9 +212,6 @@ def whatsapp():
         msg.body("That slot is taken 😅 try another time")
         return str(resp)
 
-    # =========================
-    # CREATE BOOKING
-    # =========================
     result = create_booking(
         phone=from_number,
         service_name=service["label"],
@@ -218,14 +223,11 @@ def whatsapp():
 
     SESSIONS.pop(from_number, None)
 
-    # =========================
-    # FINAL CONFIRMATION (🔥 HUMAN)
-    # =========================
     msg.body(
         f"Nice one {session['name']} 👌 you're booked in!\n\n"
         f"{service['label']} with {barber['name']}\n"
         f"{dt.strftime('%a %d %b at %I:%M%p')}\n\n"
-        f"{result.get('link', '')}\n\n"
+        f"{result.get('link','')}\n\n"
         f"If you need to change or cancel, just message 👍"
     )
 
