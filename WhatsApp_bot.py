@@ -8,7 +8,14 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
 from llm_helper import llm_extract
-from calendar_helper import is_free, create_booking, BARBERS
+from calendar_helper import (
+    is_free,
+    create_booking,
+    BARBERS,
+    list_bookings,
+    cancel_booking,
+    reschedule_booking
+)
 
 app = Flask(__name__)
 
@@ -112,6 +119,94 @@ def whatsapp():
     if text_lower in ["bye", "later", "see you"]:
         msg.body("See you soon 👋")
         return str(resp)
+
+    # =========================
+    # VIEW BOOKINGS
+    # =========================
+    if "booking" in text_lower:
+        bookings = list_bookings(from_number)
+
+    if not bookings:
+        msg.body("You’ve got no bookings 👍")
+        return str(resp)
+
+    text_out = "Here’s your bookings:\n\n"
+    for i, b in enumerate(bookings, 1):
+        text_out += f"{i}. {b['summary']} at {b['start']}\n"
+
+    text_out += "\nReply 'cancel 1' or 'reschedule 1 tomorrow 4pm'"
+    msg.body(text_out)
+    return str(resp)
+
+
+    # =========================
+    # CANCEL
+    # =========================
+    if text_lower.startswith("cancel"):
+        parts = text_lower.split()
+
+        if len(parts) < 2:
+            msg.body("Which one do you want to cancel?")
+            return str(resp)
+
+    idx = int(parts[1]) - 1
+    bookings = list_bookings(from_number)
+
+    if idx >= len(bookings):
+        msg.body("That booking doesn’t exist 😅")
+        return str(resp)
+
+    cancel_booking(bookings[idx]["id"])
+
+    msg.body("All sorted 👍 your booking is cancelled")
+    return str(resp)
+
+
+    # =========================
+    # RESCHEDULE
+    # =========================
+    if text_lower.startswith("reschedule") or "move" in text_lower:
+        parts = text_lower.split()
+
+    try:
+        idx = int(parts[1]) - 1
+    except:
+        msg.body("Try 'reschedule 1 tomorrow 4pm'")
+        return str(resp)
+
+    bookings = list_bookings(from_number)
+
+    if idx >= len(bookings):
+        msg.body("That booking doesn’t exist 😅")
+        return str(resp)
+
+    new_time_text = " ".join(parts[2:])
+
+    dt = dateparser.parse(
+        new_time_text,
+        settings={
+            "TIMEZONE": "Europe/London",
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DATES_FROM": "future",
+        },
+    )
+
+    if not dt:
+        msg.body("Didn’t catch that time 🤔")
+        return str(resp)
+
+    link = reschedule_booking(
+        bookings[idx]["id"],
+        dt,
+        30
+    )
+
+    msg.body(
+        f"Done 👌 your booking’s been moved!\n\n"
+        f"{dt.strftime('%a %d %b at %I:%M%p')}\n\n"
+        f"{link}"
+    )
+    return str(resp)
 
     # =========================
     # AI + FALLBACK EXTRACTION
