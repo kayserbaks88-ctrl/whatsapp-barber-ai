@@ -1,7 +1,7 @@
 import os
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -9,6 +9,7 @@ from googleapiclient.discovery import build
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+
 CALENDAR_IDS = {
     "jay": os.getenv("BARBER_JAY_CALENDAR_ID"),
     "mike": os.getenv("BARBER_MIKE_CALENDAR_ID"),
@@ -28,6 +29,9 @@ def get_service():
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+# =========================
+# CHECK AVAILABILITY
+# =========================
 def is_free(start_dt: datetime, end_dt: datetime, barber: Dict) -> bool:
     service = get_service()
 
@@ -46,6 +50,9 @@ def is_free(start_dt: datetime, end_dt: datetime, barber: Dict) -> bool:
     return len(events) == 0
 
 
+# =========================
+# CREATE BOOKING
+# =========================
 def create_booking(
     phone: str,
     service_name: str,
@@ -54,6 +61,7 @@ def create_booking(
     name: str,
     barber: Dict,
 ) -> Dict[str, Any]:
+
     service = get_service()
     end_dt = start_dt + timedelta(minutes=minutes)
 
@@ -85,6 +93,9 @@ def create_booking(
     }
 
 
+# =========================
+# LIST BOOKINGS (FIXED)
+# =========================
 def list_bookings(phone: str):
     service = get_service()
 
@@ -104,42 +115,24 @@ def list_bookings(phone: str):
         )
 
         for e in events:
-            desc = (e.get("description") or "").lower()
-
-            if phone.lower() in desc:
-                results.append(
-                    {
-                        "id": e["id"],
-                        "summary": e.get("summary"),
-                        "calendar_id": barber["calendar_id"],
-                    }
-                )
-
-        return results
-
-        for e in events:
             private = e.get("extendedProperties", {}).get("private", {})
             description = e.get("description", "")
 
             if private.get("phone") == phone or phone in description:
-                start_value = e.get("start", {}).get("dateTime") or e.get("start", {}).get("date")
-                end_value = e.get("end", {}).get("dateTime") or e.get("end", {}).get("date")
-
                 results.append(
                     {
                         "id": e["id"],
                         "summary": e.get("summary", ""),
-                        "start": start_value,
-                        "end": end_value,
                         "calendar_id": barber["calendar_id"],
-                        "barber_name": barber["name"],
                     }
                 )
 
-    results.sort(key=lambda x: x.get("start", ""))
     return results
 
 
+# =========================
+# CANCEL BOOKING
+# =========================
 def cancel_booking(event_id: str) -> bool:
     service = get_service()
 
@@ -156,6 +149,9 @@ def cancel_booking(event_id: str) -> bool:
     return False
 
 
+# =========================
+# GET DURATION
+# =========================
 def _get_event_duration_minutes(event: Dict) -> int:
     try:
         start_str = event["start"]["dateTime"]
@@ -167,6 +163,9 @@ def _get_event_duration_minutes(event: Dict) -> int:
         return 30
 
 
+# =========================
+# RESCHEDULE BOOKING
+# =========================
 def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
     service = get_service()
 
