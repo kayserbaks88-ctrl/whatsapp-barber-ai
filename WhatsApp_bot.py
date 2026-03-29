@@ -118,17 +118,19 @@ def whatsapp():
     if "cancel" in text_lower:
         bookings = list_bookings(from_number)
 
-        if not bookings:
-            msg.body("You’ve got no bookings to cancel 👍")
-            return str(resp)
-
-        cancelled = cancel_booking(bookings[0]["id"])
-        if cancelled:
-            SESSIONS.pop(from_number, None)
-            msg.body("Done 👍 your booking has been cancelled.")
-        else:
-            msg.body("I couldn’t cancel that booking just now. Try again in a moment 👍")
+    if not bookings:
+        msg.body("You’ve got no bookings to cancel 👍")
         return str(resp)
+
+    success = cancel_booking(bookings[0]["id"])
+
+    if success:
+        SESSIONS.pop(from_number, None)
+        msg.body("Done 👍 your booking has been cancelled.")
+    else:
+        msg.body("Couldn’t cancel it properly 😅 try again")
+    
+    return str(resp)
 
     # reschedule start
     if "change" in text_lower or "reschedule" in text_lower or "move" in text_lower:

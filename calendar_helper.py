@@ -85,9 +85,8 @@ def create_booking(
     }
 
 
-def list_bookings(phone: str) -> List[Dict]:
+def list_bookings(phone: str):
     service = get_service()
-    now = datetime.utcnow().isoformat() + "Z"
 
     results = []
 
@@ -96,14 +95,27 @@ def list_bookings(phone: str) -> List[Dict]:
             service.events()
             .list(
                 calendarId=barber["calendar_id"],
-                timeMin=now,
-                maxResults=20,
+                maxResults=50,
                 singleEvents=True,
                 orderBy="startTime",
             )
             .execute()
             .get("items", [])
         )
+
+        for e in events:
+            desc = (e.get("description") or "").lower()
+
+            if phone.lower() in desc:
+                results.append(
+                    {
+                        "id": e["id"],
+                        "summary": e.get("summary"),
+                        "calendar_id": barber["calendar_id"],
+                    }
+                )
+
+        return results
 
         for e in events:
             private = e.get("extendedProperties", {}).get("private", {})
