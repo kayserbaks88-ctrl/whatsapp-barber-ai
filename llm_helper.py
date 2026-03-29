@@ -14,7 +14,7 @@ Return ONLY valid JSON in this exact shape:
 
 {
   "intent": "book" | "view" | "cancel" | "reschedule" | "unknown",
-  "service": "haircut" | "beard trim" | "skin fade" | null,
+  "service": "haircut" | "beard trim" | "skin fade" | "kids cut" | null,
   "barber": "jay" | "mike" | null,
   "when_text": string | null,
   "name": string | null
@@ -26,6 +26,7 @@ Rules:
 - If the message is about cancelling, intent = "cancel"
 - If the message is about moving/changing a booking, intent = "reschedule"
 - If unsure, intent = "unknown"
+- If the user mentions a time or date, put that in when_text
 - Return JSON only, no markdown, no explanation
 """
 
@@ -44,7 +45,6 @@ def _extract_json(text: str) -> dict:
     if not text:
         return EMPTY_RESULT.copy()
 
-    # Try full response as JSON first
     try:
         data = json.loads(text)
         if isinstance(data, dict):
@@ -52,7 +52,6 @@ def _extract_json(text: str) -> dict:
     except Exception:
         pass
 
-    # Try to find first {...} block
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         try:
@@ -66,6 +65,11 @@ def _extract_json(text: str) -> dict:
 
 
 def llm_extract(text: str) -> dict:
+    text = (text or "").strip()
+
+    if not text:
+        return EMPTY_RESULT.copy()
+
     try:
         res = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -79,7 +83,6 @@ def llm_extract(text: str) -> dict:
         content = res.choices[0].message.content or ""
         data = _extract_json(content)
 
-        # Normalise values
         if isinstance(data.get("service"), str):
             data["service"] = data["service"].strip().lower()
 
@@ -97,7 +100,7 @@ def llm_extract(text: str) -> dict:
         if isinstance(data.get("name"), str):
             data["name"] = data["name"].strip()
 
-        return data
+        return {**EMPTY_RESULT, **data}
 
     except Exception as e:
         print("LLM ERROR:", e)
