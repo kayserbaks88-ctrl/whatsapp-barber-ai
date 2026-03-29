@@ -30,9 +30,14 @@ SERVICES = {
 
 
 def parse_when_text(text: str):
-    text = (text or "").strip()
+    text = (text or "").strip().lower()
+
     if not text:
         return None
+
+    # 🔥 Handle time-only like "11am"
+    if any(x in text for x in ["am", "pm"]) and not any(day in text for day in ["mon", "tue", "wed", "thu", "fri", "sat", "sun", "tomorrow"]):
+        text = f"today {text}"
 
     return dateparser.parse(
         text,

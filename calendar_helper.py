@@ -191,9 +191,10 @@ def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
                 .get("items", [])
             )
 
-            clash = [e for e in clash if e.get("id") != event_id]
-            if clash:
-                return None
+            # ✅ only block if REAL different event exists
+            for e in clash:
+                if e.get("id") != event_id:
+                    return None
 
             event["start"]["dateTime"] = new_start.isoformat()
             event["end"]["dateTime"] = new_end.isoformat()
@@ -206,7 +207,8 @@ def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
 
             return updated.get("htmlLink")
 
-        except Exception:
+        except Exception as e:
+            print("RESCHEDULE ERROR:", e)
             continue
 
     return None
