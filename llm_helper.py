@@ -13,7 +13,7 @@ Extract booking info from the user's message.
 Return ONLY valid JSON in this exact shape:
 
 {
-  "intent": "book" | "view" | "cancel" | "reschedule" | "unknown",
+  "intent": "book" | "view" | "cancel" | "reschedule" | "change_service" | "change_service_smart" | "unknown",
   "service": "haircut" | "beard trim" | "skin fade" | "kids cut" | null,
   "barber": "jay" | "mike" | null,
   "when_text": string | null,
@@ -24,7 +24,9 @@ Rules:
 - If the message is about making an appointment, intent = "book"
 - If the message is about seeing bookings, intent = "view"
 - If the message is about cancelling, intent = "cancel"
-- If the message is about moving/changing a booking, intent = "reschedule"
+- If the message is about moving/changing the time, intent = "reschedule"
+- If the message is about changing the service generally, intent = "change_service"
+- If the message is about changing to a specific service, intent = "change_service_smart"
 - If unsure, intent = "unknown"
 - If the user mentions a time or date, put that in when_text
 - Return JSON only, no markdown, no explanation

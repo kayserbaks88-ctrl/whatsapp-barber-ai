@@ -29,9 +29,6 @@ def get_service():
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
-# =========================
-# CHECK AVAILABILITY
-# =========================
 def is_free(start_dt: datetime, end_dt: datetime, barber: Dict) -> bool:
     service = get_service()
 
@@ -50,9 +47,6 @@ def is_free(start_dt: datetime, end_dt: datetime, barber: Dict) -> bool:
     return len(events) == 0
 
 
-# =========================
-# CREATE BOOKING
-# =========================
 def create_booking(
     phone: str,
     service_name: str,
@@ -61,7 +55,6 @@ def create_booking(
     name: str,
     barber: Dict,
 ) -> Dict[str, Any]:
-
     service = get_service()
     end_dt = start_dt + timedelta(minutes=minutes)
 
@@ -93,12 +86,8 @@ def create_booking(
     }
 
 
-# =========================
-# LIST BOOKINGS (FIXED)
-# =========================
 def list_bookings(phone: str):
     service = get_service()
-
     results = []
 
     for barber in BARBERS.values():
@@ -123,16 +112,16 @@ def list_bookings(phone: str):
                     {
                         "id": e["id"],
                         "summary": e.get("summary", ""),
+                        "start": e.get("start", {}).get("dateTime") or e.get("start", {}).get("date"),
                         "calendar_id": barber["calendar_id"],
+                        "barber_name": barber["name"],
+                        "barber_key": barber["key"],
                     }
                 )
 
     return results
 
 
-# =========================
-# CANCEL BOOKING
-# =========================
 def cancel_booking(event_id: str) -> bool:
     service = get_service()
 
@@ -149,9 +138,6 @@ def cancel_booking(event_id: str) -> bool:
     return False
 
 
-# =========================
-# GET DURATION
-# =========================
 def _get_event_duration_minutes(event: Dict) -> int:
     try:
         start_str = event["start"]["dateTime"]
@@ -163,9 +149,6 @@ def _get_event_duration_minutes(event: Dict) -> int:
         return 30
 
 
-# =========================
-# RESCHEDULE BOOKING
-# =========================
 def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
     service = get_service()
 
@@ -191,10 +174,14 @@ def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
                 .get("items", [])
             )
 
-            # ✅ only block if REAL different event exists
+            real_clash = False
             for e in clash:
                 if e.get("id") != event_id:
-                    return None
+                    real_clash = True
+                    break
+
+            if real_clash:
+                return None
 
             event["start"]["dateTime"] = new_start.isoformat()
             event["end"]["dateTime"] = new_end.isoformat()
