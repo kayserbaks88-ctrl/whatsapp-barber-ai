@@ -55,12 +55,19 @@ def apply_hard_rules(text: str):
     if "cancel" in text_lower:
         result["intent"] = "cancel"
 
-    elif any(w in text_lower for w in ["reschedule", "move"]):
-        result["intent"] = "reschedule"
+    # 🔥 SMART CHANGE FIRST (VERY IMPORTANT)
+    elif "change to" in text_lower or "switch to" in text_lower or "instead" in text_lower:
+        result["intent"] = "change_service_smart"
 
+    # 🔥 THEN NORMAL CHANGE
     elif "change service" in text_lower or "different service" in text_lower:
         result["intent"] = "change_service"
 
+    # 🔥 THEN RESCHEDULE
+    elif any(w in text_lower for w in ["reschedule", "move"]):
+        result["intent"] = "reschedule"
+
+    # THEN BOOK
     elif any(w in text_lower for w in ["book", "appointment"]):
         result["intent"] = "book"
 
