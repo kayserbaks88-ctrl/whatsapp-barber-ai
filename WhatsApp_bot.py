@@ -244,17 +244,17 @@ def whatsapp():
     if (
         any(x in text_lower for x in ["change", "move", "reschedule"])
         and not session.get("reschedule_mode")
-        and "service" not in text_lower
+        and not (hard.get("service") or data.get("service"))
     ):
-        bookings = list_bookings(from_number)
+       bookings = list_bookings(from_number)
 
-        if bookings:
-            session["reschedule_mode"] = True
-            session["reschedule_booking_id"] = bookings[0]["id"]
-            SESSIONS[from_number] = session
+       if bookings:
+           session["reschedule_mode"] = True
+           session["reschedule_booking_id"] = bookings[0]["id"]
+           SESSIONS[from_number] = session
 
-            msg.body("No worries 👍 what time would you like instead? ⏰")
-            return str(resp)
+           msg.body("No worries 👍 what time would you like instead? ⏰")
+           return str(resp)
 
     # =========================
     # RESCHEDULE TIME INPUT
