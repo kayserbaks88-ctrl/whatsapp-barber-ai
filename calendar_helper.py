@@ -111,15 +111,13 @@ def list_bookings(phone: str):
                 results.append(
                     {
                         "id": e["id"],
-                        "summary": e.get("summary", ""),
-                        "start": e.get("start", {}).get("dateTime") or e.get("start", {}).get("date"),
-                        "calendar_id": barber["calendar_id"],
-                        "barber_name": barber["name"],
-                        "barber_key": barber["key"],
+                        "start": e["start"]["dateTime"],  # ✅ IMPORTANT
+                        "barber": barber["key"],          # ✅ IMPORTANT
+                        "minutes": _get_event_duration_minutes(e),  # ✅ IMPORTANT
+                        "service": private.get("service"),          # ✅ IMPORTANT
                     }
                 )
-
-    return results
+        return results
 
 
 def cancel_booking(event_id: str) -> bool:
