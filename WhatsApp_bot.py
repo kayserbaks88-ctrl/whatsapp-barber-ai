@@ -18,7 +18,7 @@ from calendar_helper import (
 
 app = Flask(__name__)
 
-TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
+TIMEZONE = ZoneInfo("Europe/London")
 SESSIONS = {}
 
 SERVICES = {
@@ -29,58 +29,17 @@ SERVICES = {
 }
 
 
-# =========================
-# TIME PARSER (FIXED)
-# =========================
-def parse_when_text(text: str):
-    if not text:
-        return None
-
-    dt = dateparser.parse(
+def parse_time(text):
+    return dateparser.parse(
         text,
         settings={
             "TIMEZONE": str(TIMEZONE),
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
-            "RELATIVE_BASE": datetime.now(TIMEZONE),
         },
     )
 
-    if not dt and any(x in text.lower() for x in ["am", "pm"]):
-        dt = dateparser.parse(
-            f"today {text}",
-            settings={
-                "TIMEZONE": str(TIMEZONE),
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "PREFER_DATES_FROM": "future",
-                "RELATIVE_BASE": datetime.now(TIMEZONE),
-            },
-        )
 
-    return dt
-
-
-# =========================
-# SERVICE DETECTION
-# =========================
-def detect_service(text):
-    t = text.lower()
-
-    if "kid" in t:
-        return "kids cut"
-    if "fade" in t:
-        return "skin fade"
-    if "beard" in t:
-        return "beard trim"
-    if "hair" in t or t.strip() == "cut":
-        return "haircut"
-
-    return None
-
-
-# =========================
-# MAIN ROUTE
-# =========================
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     from_number = request.values.get("From")
@@ -91,13 +50,14 @@ def whatsapp():
     msg = resp.message()
 
     session = SESSIONS.get(from_number, {})
+
     data = llm_extract(text)
 
     # =========================
-    # HUMAN CHAT
+    # HUMAN FEEL
     # =========================
     if text.lower() in ["hi", "hello", "hey"]:
-        msg.body("Hey 👋 What can I book for you today? ✂️")
+        msg.body("Hey 👋 What can I get you booked in for?")
         return str(resp)
 
     if "thank" in text.lower():
@@ -105,150 +65,98 @@ def whatsapp():
         return str(resp)
 
     # =========================
-    # GET USER BOOKINGS
-    # =========================
-    bookings = list_bookings(from_number)
-
-    # =========================
     # CANCEL
     # =========================
-    if data.get("intent") == "cancel":
+    if data["intent"] == "cancel":
+        bookings = list_bookings(from_number)
+
         if not bookings:
             msg.body("You’ve got no bookings 👍")
             return str(resp)
 
         cancel_booking(bookings[0]["id"])
-        SESSIONS.pop(from_number, None)
-
-        msg.body("Done 👍 cancelled.")
-        return str(resp)
-
-    # =========================
-    # CHANGE SERVICE (SMART)
-    # =========================
-    if data.get("intent") == "change_service_smart":
-        if not bookings:
-            msg.body("No booking found 👍")
-            return str(resp)
-
-        new_service = data.get("service")
-
-        if new_service not in SERVICES:
-            msg.body("What would you like instead? ✂️")
-            return str(resp)
-
-        booking = bookings[0]
-
-        start = booking["start"]
-        barber = BARBERS[booking["barber"]]
-
-        cancel_booking(booking["id"])
-
-        result = create_booking(
-            phone=from_number,
-            service_name=SERVICES[new_service]["label"],
-            start_dt=start,
-            minutes=SERVICES[new_service]["minutes"],
-            name=name,
-            barber=barber,
-        )
-
-        msg.body(f"Done 👌 changed to {SERVICES[new_service]['label']}")
-        return str(resp)
-
-    # =========================
-    # ADD SERVICE
-    # =========================
-    if "add" in text.lower():
-        if not bookings:
-            msg.body("No booking found 👍")
-            return str(resp)
-
-        booking = bookings[0]
-        extra = detect_service(text)
-
-        if not extra:
-            msg.body("What would you like to add? ✂️")
-            return str(resp)
-
-        start = booking["start"]
-        barber = BARBERS[booking["barber"]]
-
-        total_minutes = booking["minutes"] + SERVICES[extra]["minutes"]
-
-        cancel_booking(booking["id"])
-
-        result = create_booking(
-            phone=from_number,
-            service_name=f"{booking['service']} + {SERVICES[extra]['label']}",
-            start_dt=start,
-            minutes=total_minutes,
-            name=name,
-            barber=barber,
-        )
-
-        msg.body("Nice upgrade 👌 added successfully")
+        msg.body("No worries 👍 all cancelled.")
         return str(resp)
 
     # =========================
     # RESCHEDULE
     # =========================
-    if data.get("intent") == "reschedule":
+    if data["intent"] == "reschedule":
+        bookings = list_bookings(from_number)
+
         if not bookings:
-            msg.body("No booking to change 👍")
+            msg.body("You’ve got no booking to change 👍")
             return str(resp)
 
-        session["reschedule"] = bookings[0]["id"]
+        session["reschedule_id"] = bookings[0]["id"]
         SESSIONS[from_number] = session
 
-        msg.body("What time would you like? ⏰")
+        msg.body("No worries 👍 what time works instead? ⏰")
         return str(resp)
 
-    if session.get("reschedule"):
-        dt = parse_when_text(text)
+    if session.get("reschedule_id"):
+        dt = parse_time(text)
 
         if not dt:
-            msg.body("Try 'tomorrow 3pm'")
+            msg.body("Try something like 'tomorrow 3pm'")
             return str(resp)
 
-        link = reschedule_booking(session["reschedule"], dt)
-
+        link = reschedule_booking(session["reschedule_id"], dt)
         SESSIONS.pop(from_number, None)
 
-        msg.body(f"Updated 👌\n{dt.strftime('%A %I:%M%p')}")
+        msg.body(f"All sorted 👌\n{dt.strftime('%A %I:%M%p')}")
         return str(resp)
 
     # =========================
-    # BOOKING FLOW
+    # CAPTURE DETAILS
     # =========================
     if data.get("service"):
-        session["service"] = data["service"]
+        session["service"] = data["service"].strip().lower()
 
     if data.get("barber"):
-        session["barber"] = data["barber"]
+        session["barber"] = data["barber"].strip().lower()
 
     if data.get("when_text"):
         session["when"] = data["when_text"]
 
+    SESSIONS[from_number] = session
+
+    # =========================
+    # NATURAL FLOW
+    # =========================
     if "service" not in session:
-        msg.body("What would you like? ✂️")
+        msg.body("What would you like to book? ✂️")
         return str(resp)
 
     if "barber" not in session:
-        msg.body("Jay or Mike?")
+        msg.body("Who would you like? (Jay or Mike) 💈")
         return str(resp)
 
     if "when" not in session:
-        msg.body("When?")
+        msg.body("When would you like to come in? ⏰")
         return str(resp)
 
-    dt = parse_when_text(session["when"])
+    # =========================
+    # BOOK
+    # =========================
+    dt = parse_time(session["when"])
 
-    service = SERVICES[session["service"]]
-    barber = BARBERS[session["barber"]]
+    if not dt:
+        msg.body("Try something like 'tomorrow 3pm'")
+        return str(resp)
 
-    if not is_free(dt, dt + timedelta(minutes=service["minutes"]), barber):
-        msg.body("That slot is taken 😅")
+    service = SERVICES.get(session["service"])
+    barber = BARBERS.get(session["barber"])
+
+    if not service or not barber:
+        msg.body("Let’s try that again 👍")
+        SESSIONS.pop(from_number, None)
+        return str(resp)
+
+    end = dt + timedelta(minutes=service["minutes"])
+
+    if not is_free(dt, end, barber):
+        msg.body("That time’s taken 😅 want another?")
         return str(resp)
 
     result = create_booking(
@@ -263,9 +171,11 @@ def whatsapp():
     SESSIONS.pop(from_number, None)
 
     msg.body(
-        f"Nice one {name} 👌\n"
-        f"{service['label']} with {barber['name']}\n"
-        f"{dt.strftime('%A %I:%M%p')}"
+        f"Nice one {name} 👌 you're booked in!\n\n"
+        f"✂️ {service['label']} with {barber['name']}\n"
+        f"📅 {dt.strftime('%A %d %b')}\n"
+        f"⏰ {dt.strftime('%I:%M%p')}\n\n"
+        f"If you need to change anything just message 👍"
     )
 
     return str(resp)
