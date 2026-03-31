@@ -36,6 +36,7 @@ def parse_time(text):
             "TIMEZONE": str(TIMEZONE),
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
+            "STRICT_PARSING": False,
         },
     )
 
@@ -112,8 +113,7 @@ def whatsapp():
     # =========================
     if data.get("service"):
         session["service"] = data["service"].strip().lower()
-
-    if data.get("barber"):
+    if data.get("barber") and "barber" not in session:
         session["barber"] = data["barber"].strip().lower()
 
     if data.get("when_text"):
