@@ -141,6 +141,8 @@ def whatsapp():
     # =========================
     dt = parse_time(session["when"])
 
+    print("BOOKING DATE:", dt)  # 👈 ADD THIS LINE
+
     if not dt:
         msg.body("Try something like 'tomorrow 3pm'")
         return str(resp)
