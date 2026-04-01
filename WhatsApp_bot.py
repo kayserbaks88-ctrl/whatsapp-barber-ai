@@ -32,7 +32,7 @@ def health():
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     incoming_msg = (request.form.get("Body") or "").strip()
-    from_number = (request.form.get("From") or "").strip()
+    from_number = (request.form.get("From") or "").replace("whatsapp:", "").strip()
     profile_name = (request.form.get("ProfileName") or "").strip()
 
     session = get_session(from_number)
