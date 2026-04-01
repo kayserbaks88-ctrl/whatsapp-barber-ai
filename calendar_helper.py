@@ -1,199 +1,108 @@
 import os
 import json
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+import re
+from openai import OpenAI
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SYSTEM_PROMPT = """
+You are an AI booking assistant for a barber shop.
 
-GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+Extract booking info from the user's message.
 
-CALENDAR_IDS = {
-    "jay": os.getenv("BARBER_JAY_CALENDAR_ID"),
-    "mike": os.getenv("BARBER_MIKE_CALENDAR_ID"),
+Return ONLY valid JSON in this exact shape:
+
+{
+  "intent": "book" | "view" | "cancel" | "reschedule" | "change_service" | "change_service_smart" | "add_service" | "unknown",
+  "service": "haircut" | "beard trim" | "skin fade" | "kids cut" | null,
+  "barber": "jay" | "mike" | null,
+  "when_text": string | null,
+  "name": string | null
 }
 
-BARBERS = {
-    "jay": {"key": "jay", "name": "Jay", "calendar_id": CALENDAR_IDS["jay"]},
-    "mike": {"key": "mike", "name": "Mike", "calendar_id": CALENDAR_IDS["mike"]},
+Rules:
+- book = user wants to make a booking
+- view = user wants to see existing bookings
+- cancel = user wants to cancel a booking
+- reschedule = user wants to move/change the time
+- change_service = user wants to change the service generally
+- change_service_smart = user wants to change to a specific service
+- add_service = user wants to add an extra service
+- Put date/time text into when_text when present
+- Return JSON only
+"""
+
+EMPTY_RESULT = {
+    "intent": "unknown",
+    "service": None,
+    "barber": None,
+    "when_text": None,
+    "name": None,
 }
 
 
-def get_service():
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(GOOGLE_SERVICE_ACCOUNT_JSON),
-        scopes=SCOPES,
-    )
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+def _extract_json(text: str) -> dict:
+    text = (text or "").strip()
 
+    if not text:
+        return EMPTY_RESULT.copy()
 
-def is_free(start_dt: datetime, end_dt: datetime, barber: Dict) -> bool:
-    service = get_service()
-
-    events = (
-        service.events()
-        .list(
-            calendarId=barber["calendar_id"],
-            timeMin=start_dt.isoformat(),
-            timeMax=end_dt.isoformat(),
-            singleEvents=True,
-        )
-        .execute()
-        .get("items", [])
-    )
-
-    return len(events) == 0
-
-
-def create_booking(
-    phone: str,
-    service_name: str,
-    start_dt: datetime,
-    minutes: int,
-    name: str,
-    barber: Dict,
-) -> Dict[str, Any]:
-    service = get_service()
-    end_dt = start_dt + timedelta(minutes=minutes)
-
-    event = {
-        "summary": f"{service_name} - {name}",
-        "description": f"Phone: {phone}\nBarber: {barber['name']}",
-        "start": {"dateTime": start_dt.isoformat()},
-        "end": {"dateTime": end_dt.isoformat()},
-        "extendedProperties": {
-            "private": {
-                "phone": phone,
-                "barber": barber["key"],
-                "service": service_name,
-                "customer_name": name,
-            }
-        },
-    }
-
-    created = (
-        service.events()
-        .insert(calendarId=barber["calendar_id"], body=event)
-        .execute()
-    )
-
-    return {
-        "id": created["id"],
-        "link": created.get("htmlLink"),
-        "calendar_id": barber["calendar_id"],
-    }
-
-
-def list_bookings(phone: str):
-    service = get_service()
-    results = []
-
-    for barber in BARBERS.values():
-        events = (
-            service.events()
-            .list(
-                calendarId=barber["calendar_id"],
-                maxResults=50,
-                singleEvents=True,
-                orderBy="startTime",
-            )
-            .execute()
-            .get("items", [])
-        )
-
-        for e in events:
-            private = e.get("extendedProperties", {}).get("private", {})
-            description = e.get("description", "")
-
-            if private.get("phone") == phone or phone in description:
-                results.append(
-                    {
-                        "id": e["id"],
-                        "start": e["start"]["dateTime"],  # ✅ IMPORTANT
-                        "barber": barber["key"],          # ✅ IMPORTANT
-                        "minutes": _get_event_duration_minutes(e),  # ✅ IMPORTANT
-                        "service": private.get("service"),          # ✅ IMPORTANT
-                    }
-                )
-        return results
-
-
-def cancel_booking(event_id: str) -> bool:
-    service = get_service()
-
-    for barber in BARBERS.values():
-        try:
-            service.events().delete(
-                calendarId=barber["calendar_id"],
-                eventId=event_id,
-            ).execute()
-            return True
-        except Exception:
-            continue
-
-    return False
-
-
-def _get_event_duration_minutes(event: Dict) -> int:
     try:
-        start_str = event["start"]["dateTime"]
-        end_str = event["end"]["dateTime"]
-        start_dt = datetime.fromisoformat(start_str)
-        end_dt = datetime.fromisoformat(end_str)
-        return int((end_dt - start_dt).total_seconds() // 60)
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return {**EMPTY_RESULT, **data}
     except Exception:
-        return 30
+        pass
 
-
-def reschedule_booking(event_id: str, new_start: datetime) -> Optional[str]:
-    service = get_service()
-
-    for barber in BARBERS.values():
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
         try:
-            event = service.events().get(
-                calendarId=barber["calendar_id"],
-                eventId=event_id,
-            ).execute()
+            data = json.loads(match.group(0))
+            if isinstance(data, dict):
+                return {**EMPTY_RESULT, **data}
+        except Exception:
+            pass
 
-            minutes = _get_event_duration_minutes(event)
-            new_end = new_start + timedelta(minutes=minutes)
+    return EMPTY_RESULT.copy()
 
-            clash = (
-                service.events()
-                .list(
-                    calendarId=barber["calendar_id"],
-                    timeMin=new_start.isoformat(),
-                    timeMax=new_end.isoformat(),
-                    singleEvents=True,
-                )
-                .execute()
-                .get("items", [])
-            )
 
-            real_clash = False
-            for e in clash:
-                if e.get("id") != event_id:
-                    real_clash = True
-                    break
+def llm_extract(text: str) -> dict:
+    text = (text or "").strip()
+    if not text:
+        return EMPTY_RESULT.copy()
 
-            if real_clash:
-                return None
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=0,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        )
 
-            event["start"]["dateTime"] = new_start.isoformat()
-            event["end"]["dateTime"] = new_end.isoformat()
+        content = res.choices[0].message.content or ""
+        data = _extract_json(content)
 
-            updated = service.events().update(
-                calendarId=barber["calendar_id"],
-                eventId=event_id,
-                body=event,
-            ).execute()
+        if isinstance(data.get("service"), str):
+            data["service"] = data["service"].strip().lower()
 
-            return updated.get("htmlLink")
+        if isinstance(data.get("barber"), str):
+            data["barber"] = data["barber"].strip().lower()
 
-        except Exception as e:
-            print("RESCHEDULE ERROR:", e)
-            continue
+        if isinstance(data.get("intent"), str):
+            data["intent"] = data["intent"].strip().lower()
+        else:
+            data["intent"] = "unknown"
 
-    return None
+        if isinstance(data.get("when_text"), str):
+            data["when_text"] = data["when_text"].strip()
+
+        if isinstance(data.get("name"), str):
+            data["name"] = data["name"].strip()
+
+        return {**EMPTY_RESULT, **data}
+
+    except Exception as e:
+        print("LLM ERROR:", e)
+        return EMPTY_RESULT.copy()
