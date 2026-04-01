@@ -1,108 +1,245 @@
-import os
 import json
-import re
-from openai import OpenAI
+import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
-SYSTEM_PROMPT = """
-You are an AI booking assistant for a barber shop.
+TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 
-Extract booking info from the user's message.
-
-Return ONLY valid JSON in this exact shape:
-
-{
-  "intent": "book" | "view" | "cancel" | "reschedule" | "change_service" | "change_service_smart" | "add_service" | "unknown",
-  "service": "haircut" | "beard trim" | "skin fade" | "kids cut" | null,
-  "barber": "jay" | "mike" | null,
-  "when_text": string | null,
-  "name": string | null
+SERVICES = {
+    "haircut": {"label": "Haircut", "minutes": 30},
+    "beard trim": {"label": "Beard Trim", "minutes": 20},
+    "skin fade": {"label": "Skin Fade", "minutes": 45},
+    "kids cut": {"label": "Kids Cut", "minutes": 30},
 }
 
-Rules:
-- book = user wants to make a booking
-- view = user wants to see existing bookings
-- cancel = user wants to cancel a booking
-- reschedule = user wants to move/change the time
-- change_service = user wants to change the service generally
-- change_service_smart = user wants to change to a specific service
-- add_service = user wants to add an extra service
-- Put date/time text into when_text when present
-- Return JSON only
-"""
-
-EMPTY_RESULT = {
-    "intent": "unknown",
-    "service": None,
-    "barber": None,
-    "when_text": None,
-    "name": None,
+BARBERS = {
+    "jay": {
+        "key": "jay",
+        "name": "Jay",
+        "calendar_id": os.getenv("BARBER_JAY_CALENDAR_ID", ""),
+    },
+    "mike": {
+        "key": "mike",
+        "name": "Mike",
+        "calendar_id": os.getenv("BARBER_MIKE_CALENDAR_ID", ""),
+    },
 }
 
 
-def _extract_json(text: str) -> dict:
-    text = (text or "").strip()
+def _get_service():
+    raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        raise ValueError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
 
-    if not text:
-        return EMPTY_RESULT.copy()
+    info = json.loads(raw)
+    creds = service_account.Credentials.from_service_account_info(
+        info,
+        scopes=["https://www.googleapis.com/auth/calendar"],
+    )
+    return build("calendar", "v3", credentials=creds)
 
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return {**EMPTY_RESULT, **data}
-    except Exception:
-        pass
 
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
+def _calendar_id_for_barber(barber: str) -> str:
+    barber = (barber or "").strip().lower()
+    if barber not in BARBERS:
+        raise ValueError(f"Unknown barber: {barber}")
+    calendar_id = BARBERS[barber]["calendar_id"]
+    if not calendar_id:
+        raise ValueError(f"Missing calendar id for barber: {barber}")
+    return calendar_id
+
+
+def _event_end(start_dt: datetime, minutes: int) -> datetime:
+    return start_dt + timedelta(minutes=minutes)
+
+
+def is_free(start_dt: datetime, end_dt: datetime, barber: str, ignore_event_id: str | None = None) -> bool:
+    service = _get_service()
+    calendar_id = _calendar_id_for_barber(barber)
+
+    events_result = service.events().list(
+        calendarId=calendar_id,
+        timeMin=start_dt.astimezone(TIMEZONE).isoformat(),
+        timeMax=end_dt.astimezone(TIMEZONE).isoformat(),
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+
+    items = events_result.get("items", [])
+    for event in items:
+        if ignore_event_id and event.get("id") == ignore_event_id:
+            continue
+        if event.get("status") == "cancelled":
+            continue
+        return False
+
+    return True
+
+
+def create_booking(phone: str, service_name: str, start_dt: datetime, minutes: int, name: str, barber: str) -> dict:
+    service = _get_service()
+    calendar_id = _calendar_id_for_barber(barber)
+    end_dt = _event_end(start_dt, minutes)
+
+    if not is_free(start_dt, end_dt, barber):
+        raise ValueError("That slot is not available")
+
+    service_label = SERVICES.get(service_name, {}).get("label", service_name.title())
+    barber_name = BARBERS[barber]["name"]
+
+    event = {
+        "summary": f"{service_label} - {name}",
+        "description": (
+            f"Customer: {name}\n"
+            f"Phone: {phone}\n"
+            f"Service: {service_label}\n"
+            f"Barber: {barber_name}"
+        ),
+        "start": {
+            "dateTime": start_dt.astimezone(TIMEZONE).isoformat(),
+            "timeZone": str(TIMEZONE),
+        },
+        "end": {
+            "dateTime": end_dt.astimezone(TIMEZONE).isoformat(),
+            "timeZone": str(TIMEZONE),
+        },
+        "extendedProperties": {
+            "private": {
+                "phone": phone,
+                "barber": barber,
+                "service": service_name,
+                "customer_name": name,
+            }
+        },
+    }
+
+    created = service.events().insert(calendarId=calendar_id, body=event).execute()
+
+    return {
+        "id": created.get("id"),
+        "link": created.get("htmlLink"),
+        "calendar_id": calendar_id,
+        "barber": barber,
+        "service": service_name,
+        "customer_name": name,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+    }
+
+
+def list_bookings(phone: str) -> list[dict]:
+    service = _get_service()
+    now = datetime.now(TIMEZONE).isoformat()
+    found = []
+
+    for barber_key, barber_data in BARBERS.items():
+        calendar_id = barber_data["calendar_id"]
+        if not calendar_id:
+            continue
+
+        events_result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=now,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=20,
+        ).execute()
+
+        items = events_result.get("items", [])
+        for event in items:
+            if event.get("status") == "cancelled":
+                continue
+
+            private = ((event.get("extendedProperties") or {}).get("private") or {})
+            description = event.get("description") or ""
+            event_phone = private.get("phone") or ""
+
+            if phone != event_phone and phone not in description:
+                continue
+
+            found.append(
+                {
+                    "id": event.get("id"),
+                    "summary": event.get("summary"),
+                    "start": ((event.get("start") or {}).get("dateTime") or ""),
+                    "end": ((event.get("end") or {}).get("dateTime") or ""),
+                    "link": event.get("htmlLink"),
+                    "barber": private.get("barber", barber_key),
+                    "service": private.get("service"),
+                    "customer_name": private.get("customer_name"),
+                    "calendar_id": calendar_id,
+                }
+            )
+
+    found.sort(key=lambda x: x.get("start", ""))
+    return found
+
+
+def cancel_booking(event_id: str) -> bool:
+    service = _get_service()
+
+    for barber_key, barber_data in BARBERS.items():
+        calendar_id = barber_data["calendar_id"]
+        if not calendar_id:
+            continue
+
         try:
-            data = json.loads(match.group(0))
-            if isinstance(data, dict):
-                return {**EMPTY_RESULT, **data}
+            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+            return True
         except Exception:
-            pass
+            continue
 
-    return EMPTY_RESULT.copy()
+    return False
 
 
-def llm_extract(text: str) -> dict:
-    text = (text or "").strip()
-    if not text:
-        return EMPTY_RESULT.copy()
+def reschedule_booking(event_id: str, new_start: datetime) -> dict | None:
+    service = _get_service()
 
-    try:
-        res = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
-        )
+    for barber_key, barber_data in BARBERS.items():
+        calendar_id = barber_data["calendar_id"]
+        if not calendar_id:
+            continue
 
-        content = res.choices[0].message.content or ""
-        data = _extract_json(content)
+        try:
+            event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        except Exception:
+            continue
 
-        if isinstance(data.get("service"), str):
-            data["service"] = data["service"].strip().lower()
+        private = ((event.get("extendedProperties") or {}).get("private") or {})
+        service_name = private.get("service", "haircut")
+        barber = private.get("barber", barber_key)
+        minutes = SERVICES.get(service_name, {"minutes": 30})["minutes"]
+        new_end = new_start + timedelta(minutes=minutes)
 
-        if isinstance(data.get("barber"), str):
-            data["barber"] = data["barber"].strip().lower()
+        if not is_free(new_start, new_end, barber, ignore_event_id=event_id):
+            raise ValueError("That new slot is not available")
 
-        if isinstance(data.get("intent"), str):
-            data["intent"] = data["intent"].strip().lower()
-        else:
-            data["intent"] = "unknown"
+        event["start"] = {
+            "dateTime": new_start.astimezone(TIMEZONE).isoformat(),
+            "timeZone": str(TIMEZONE),
+        }
+        event["end"] = {
+            "dateTime": new_end.astimezone(TIMEZONE).isoformat(),
+            "timeZone": str(TIMEZONE),
+        }
 
-        if isinstance(data.get("when_text"), str):
-            data["when_text"] = data["when_text"].strip()
+        updated = service.events().update(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=event,
+        ).execute()
 
-        if isinstance(data.get("name"), str):
-            data["name"] = data["name"].strip()
+        return {
+            "id": updated.get("id"),
+            "link": updated.get("htmlLink"),
+            "calendar_id": calendar_id,
+            "barber": barber,
+            "service": service_name,
+            "start": new_start.isoformat(),
+            "end": new_end.isoformat(),
+        }
 
-        return {**EMPTY_RESULT, **data}
-
-    except Exception as e:
-        print("LLM ERROR:", e)
-        return EMPTY_RESULT.copy()
+    return None
