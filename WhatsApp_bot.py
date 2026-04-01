@@ -29,14 +29,104 @@ SERVICES = {
 }
 
 
-def parse_time(text):
+import re
+
+def parse_time(text: str):
+    text = (text or "").strip().lower()
+    if not text:
+        return None
+
+    now = datetime.now(TIMEZONE)
+
+    weekdays = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
+
+    # handle "tomorrow 6pm"
+    if text.startswith("tomorrow"):
+        time_part = text.replace("tomorrow", "", 1).strip()
+        base_date = now + timedelta(days=1)
+
+        time_dt = dateparser.parse(
+            time_part,
+            settings={
+                "TIMEZONE": str(TIMEZONE),
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "RELATIVE_BASE": now,
+            },
+        )
+        if not time_dt:
+            return None
+
+        return base_date.replace(
+            hour=time_dt.hour,
+            minute=time_dt.minute,
+            second=0,
+            microsecond=0,
+        )
+
+    # handle explicit weekday like "tuesday 6pm"
+    for day_name, day_num in weekdays.items():
+        if day_name in text:
+            time_part = text.replace(day_name, "").strip()
+            time_dt = dateparser.parse(
+                time_part,
+                settings={
+                    "TIMEZONE": str(TIMEZONE),
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "RELATIVE_BASE": now,
+                },
+            )
+            if not time_dt:
+                return None
+
+            days_ahead = (day_num - now.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+
+            target_date = now + timedelta(days=days_ahead)
+
+            return target_date.replace(
+                hour=time_dt.hour,
+                minute=time_dt.minute,
+                second=0,
+                microsecond=0,
+            )
+
+    # fallback for simple time-only input like "6pm"
+    if any(x in text for x in ["am", "pm"]):
+        time_dt = dateparser.parse(
+            text,
+            settings={
+                "TIMEZONE": str(TIMEZONE),
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "RELATIVE_BASE": now,
+            },
+        )
+        if not time_dt:
+            return None
+
+        return now.replace(
+            hour=time_dt.hour,
+            minute=time_dt.minute,
+            second=0,
+            microsecond=0,
+        )
+
+    # final fallback
     return dateparser.parse(
         text,
         settings={
             "TIMEZONE": str(TIMEZONE),
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
-            "STRICT_PARSING": False,
+            "RELATIVE_BASE": now,
         },
     )
 
