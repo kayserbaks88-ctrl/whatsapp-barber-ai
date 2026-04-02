@@ -122,19 +122,31 @@ def run_receptionist_agent(
                 link = result.get("booking", {}).get("link", "")
                 return f"Nice one 👌 you're booked!\n📅 {link}"
             return "That slot just went 😅 want another?"
-
+    
+    history_text = "\n".join(
+        [f"{h['role']}: {h['content']}" for h in session.get("history", [])[-10:]]
+    )
     # ✅ AI SYSTEM PROMPT
     instructions = f"""
-You are a friendly WhatsApp barber receptionist for {business_name}.
+    You are a friendly WhatsApp barber receptionist for {business_name}.
 
-- Be natural and human
-- Keep replies short
-- Use light emojis
-- Do NOT ask same question twice
+    Rules:
+    - Be natural and human
+    - Use light emojis
+    - NEVER ask for info already given
+    - If user already mentioned service, barber, or time → DO NOT ask again
+    - Combine messages (e.g. "haircut with Mike" + "6pm tomorrow")
 
-Book immediately when you have:
-service + barber + time
-"""
+    Extract and remember from conversation:
+    - service
+    - barber
+    - date/time
+
+    If all details are present → proceed to booking
+
+    Conversation:
+    {history_text}
+    """
 
     # ✅ FIRST CALL
     response = client.responses.create(
