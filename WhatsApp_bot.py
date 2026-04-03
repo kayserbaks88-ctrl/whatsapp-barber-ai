@@ -1,113 +1,127 @@
+import json
 import os
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
+from typing import Any
 
 import dateparser
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
+from openai import OpenAI
 
-from agent_helper import run_receptionist_agent
+from calendar_helper import (
+    BARBERS,
+    SERVICES,
+    create_booking,
+    is_free,
+)
 
-app = Flask(__name__)
-
-TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
-BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
-
-# Simple memory per WhatsApp number
-SESSIONS: dict[str, dict] = {}
-
-
-# -------------------------------
-# SESSION HANDLER
-# -------------------------------
-def get_session(phone: str) -> dict:
-    if phone not in SESSIONS:
-        SESSIONS[phone] = {
-            "history": [],
-            "profile_name": None,
-            "data": {},  # 🔥 IMPORTANT (memory store)
-        }
-    return SESSIONS[phone]
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
-# -------------------------------
-# DATE PARSER (🔥 CRITICAL)
-# -------------------------------
-def parse_when_text(text: str):
-    return dateparser.parse(
-        text,
+def run_receptionist_agent(
+    user_message: str,
+    phone: str,
+    profile_name: str | None,
+    session: dict,
+    business_name: str,
+    timezone_name: str,
+) -> str:
+
+    customer_name = (profile_name or "").strip()
+
+    # 👋 FIRST TIME GREETING
+    if not session.get("welcomed"):
+        session["welcomed"] = True
+        if customer_name:
+            return f"Welcome back {customer_name} 👋 What can I get you booked in for today? ✂️"
+        return "Hey 👋 What can I get you booked in for today? ✂️"
+
+    # 🔥 MEMORY STORE
+    if "data" not in session:
+        session["data"] = {}
+
+    data = session["data"]
+    msg = user_message.lower()
+
+    # detect service
+    for key in SERVICES:
+        if key in msg:
+            data["service"] = key
+
+    # detect barber
+    for key in BARBERS:
+        if key in msg:
+            data["barber"] = key
+
+    # detect time
+    parsed = dateparser.parse(
+        user_message,
         settings={
-            "TIMEZONE": str(TIMEZONE),
+            "TIMEZONE": timezone_name,
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
-            "RELATIVE_BASE": datetime.now(TIMEZONE),
         },
     )
 
+    if parsed:
+        data["when"] = parsed.isoformat()
 
-# -------------------------------
-# HEALTH CHECK
-# -------------------------------
-@app.route("/health", methods=["GET"])
-def health():
-    return {"ok": True, "service": BUSINESS_NAME}, 200
+    # 🔥 AUTO BOOKING (THE MAGIC)
+    if all(k in data for k in ["service", "barber", "when"]):
+        try:
+            start_dt = datetime.fromisoformat(data["when"])
+            minutes = SERVICES[data["service"]]["minutes"]
 
+            if is_free(start_dt, start_dt + timedelta(minutes=minutes), data["barber"]):
+                result = create_booking(
+                    phone=phone,
+                    service_name=data["service"],
+                    start_dt=start_dt,
+                    minutes=minutes,
+                    name=customer_name or "Customer",
+                    barber=data["barber"],
+                )
 
-# -------------------------------
-# WHATSAPP WEBHOOK
-# -------------------------------
-@app.route("/whatsapp", methods=["POST"])
-def whatsapp():
-    incoming_msg = (request.form.get("Body") or "").strip()
-    from_number = (request.form.get("From") or "").strip()
-    profile_name = (request.form.get("ProfileName") or "").strip()
+                session["data"] = {}
 
-    session = get_session(from_number)
+                link = result.get("link", "")
+                return (
+                    f"Nice one {customer_name or ''} 👌 you're booked in!\n"
+                    f"📅 {start_dt.strftime('%A %I:%M %p')}\n"
+                    f"✂️ {data['service'].title()} with {data['barber'].title()}\n"
+                    f"{link}"
+                )
+            else:
+                return "That time’s taken 😅 want another time?"
 
-    if profile_name:
-        session["profile_name"] = profile_name
+        except Exception:
+            return "Something went wrong booking that — try again 👍"
 
-    if not incoming_msg:
-        twiml = MessagingResponse()
-        twiml.message("Hey 👋 send me a message and I’ll help with your booking.")
-        return str(twiml)
+    # 🤖 AI fallback (only for missing info)
+    instructions = f"""
+You are a friendly WhatsApp receptionist for {business_name}.
 
-    # 🔥 TIME EXTRACTION (THIS WAS YOUR MISSING PIECE)
-    dt = parse_when_text(incoming_msg)
+Rules:
+- Be natural and human
+- Keep it short
+- Use light emojis
+- NEVER ask for info already given
+- If user already gave service, barber or time → don't ask again
+- Combine messages naturally
 
-    if dt:
-        session.setdefault("data", {})
-        session["data"]["when"] = dt.isoformat()
+Conversation so far:
+Service: {data.get("service")}
+Barber: {data.get("barber")}
+Time: {data.get("when")}
+"""
 
-    # -------------------------------
-    # RUN AI AGENT
-    # -------------------------------
-    reply = run_receptionist_agent(
-        user_message=incoming_msg,
-        phone=from_number,
-        profile_name=session.get("profile_name"),
-        session=session,
-        business_name=BUSINESS_NAME,
-        timezone_name=str(TIMEZONE),
+    response = client.responses.create(
+        model=OPENAI_MODEL,
+        instructions=instructions,
+        input=user_message,
     )
 
-    # -------------------------------
-    # STORE HISTORY
-    # -------------------------------
-    session["history"].append({"role": "user", "content": incoming_msg})
-    session["history"].append({"role": "assistant", "content": reply})
-    session["history"] = session["history"][-20:]
+    text = (response.output_text or "").strip()
+    if text:
+        return text
 
-    # -------------------------------
-    # SEND RESPONSE
-    # -------------------------------
-    twiml = MessagingResponse()
-    twiml.message(reply)
-    return str(twiml)
-
-
-# -------------------------------
-# RUN SERVER
-# -------------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+    return "Tell me what you'd like to book 👍"
