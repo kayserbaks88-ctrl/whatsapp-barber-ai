@@ -142,7 +142,18 @@ def run_receptionist_agent(
     - barber
     - date/time
 
-    If all details are present → proceed to booking
+    If the user has already provided:
+    - service
+    - barber
+    - date/time
+
+    Then you MUST immediately book the appointment.
+
+    Do NOT ask any more questions.
+    Do NOT repeat requests.
+    Do NOT restart the flow.
+
+    Instead, confirm the booking naturally.
 
     Conversation:
     {history_text}
