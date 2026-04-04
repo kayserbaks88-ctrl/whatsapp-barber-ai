@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime, timedelta
 
@@ -27,21 +26,25 @@ def run_receptionist_agent(
 
     customer_name = (profile_name or "").strip()
 
-    # 👋 FIRST MESSAGE ONLY
+    # 👋 FIRST MESSAGE
     if not session.get("welcomed"):
         session["welcomed"] = True
         if customer_name:
             return f"Welcome back {customer_name} 👋 What can I get you booked in for today? ✂️"
         return "Hey 👋 What can I get you booked in for today? ✂️"
 
-    # 🧠 MEMORY STORE
+    # 🧠 MEMORY
     if "data" not in session:
         session["data"] = {}
 
     data = session["data"]
-    msg = user_message.lower()
+    msg = user_message.lower().strip()
 
-    # 🔥 SERVICE DETECTION (FIXED)
+    # 💬 HUMAN REPLIES (important)
+    if msg in ["thanks", "thank you", "cheers", "nice one", "ok", "okay", "cool"]:
+        return "You're welcome 😊 Just message anytime if you need anything 👍"
+
+    # 🔥 SERVICE DETECTION
     if "haircut" in msg:
         data["service"] = "haircut"
     elif "beard" in msg:
@@ -57,7 +60,7 @@ def run_receptionist_agent(
     elif "mike" in msg:
         data["barber"] = "mike"
 
-    # 🔥 TIME DETECTION (ROBUST)
+    # 🔥 TIME DETECTION
     parsed = dateparser.parse(
         user_message,
         settings={
@@ -70,7 +73,7 @@ def run_receptionist_agent(
     if parsed:
         data["when"] = parsed.isoformat()
 
-    # 🔥 AUTO BOOKING (MAIN LOGIC)
+    # 🔥 AUTO BOOKING
     if all(k in data for k in ["service", "barber", "when"]):
         try:
             start_dt = datetime.fromisoformat(data["when"])
@@ -86,16 +89,29 @@ def run_receptionist_agent(
                     barber=data["barber"],
                 )
 
-                # clear memory after booking
+                # 🧹 clear memory after booking
                 session["data"] = {}
 
                 link = result.get("link", "")
 
+                # 🧠 FRIENDLY DATE DISPLAY
+                today = datetime.now(start_dt.tzinfo).date()
+                booking_day = start_dt.date()
+
+                if booking_day == today + timedelta(days=1):
+                    day_text = "Tomorrow"
+                elif booking_day == today:
+                    day_text = "Today"
+                else:
+                    day_text = start_dt.strftime("%A")
+
+                time_text = start_dt.strftime("%I:%M %p")
+
                 return (
-                    f"Nice one {customer_name or ''} 👌 you're booked in!\n"
-                    f"📅 {start_dt.strftime('%A %I:%M %p')}\n"
-                    f"✂️ {data['service'].title()} with {data['barber'].title()}\n"
-                    f"{link}"
+                    f"Nice one {customer_name or ''} 👌 you're booked in!\n\n"
+                    f"📅 {day_text} {time_text}\n"
+                    f"✂️ {data['service'].title()} with {data['barber'].title()}\n\n"
+                    f"📲 View booking:\n{link}"
                 )
             else:
                 return "That time’s taken 😅 want another time?"
@@ -104,7 +120,7 @@ def run_receptionist_agent(
             print("BOOK ERROR:", e)
             return "Something went wrong booking that — try again 👍"
 
-    # 🔥 SMART RESPONSE FLOW (NO REPEATS)
+    # 🔥 SMART FLOW (NO REPEATS)
 
     if "service" not in data:
         return "What would you like to book? ✂️"
@@ -115,5 +131,4 @@ def run_receptionist_agent(
     if "when" not in data:
         return "What day and time works for you? 📅"
 
-    # fallback (rare)
     return "Tell me what you'd like to book 👍"
