@@ -67,6 +67,16 @@ def run_receptionist_agent(
         if key in msg:
             data["service"] = key
 
+    # 🔥 extra fallback matching
+    if "hair" in msg:
+        data["service"] = "haircut"
+    if "fade" in msg:
+        data["service"] = "skin fade"
+    if "beard" in msg:
+        data["service"] = "beard trim"
+    if "kid" in msg:
+        data["service"] = "kids cut"
+
     for key in BARBERS:
         if key in msg:
             data["barber"] = key
