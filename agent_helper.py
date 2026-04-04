@@ -1,7 +1,6 @@
 import json
 import os
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import dateparser
 from openai import OpenAI
@@ -9,235 +8,112 @@ from openai import OpenAI
 from calendar_helper import (
     BARBERS,
     SERVICES,
-    cancel_booking,
     create_booking,
     is_free,
-    list_bookings,
-    reschedule_booking,
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 
+def run_receptionist_agent(
+    user_message: str,
+    phone: str,
+    profile_name: str | None,
+    session: dict,
+    business_name: str,
+    timezone_name: str,
+) -> str:
 
-def parse_natural_time(text: str):
-    return dateparser.parse(
-        text,
+    customer_name = (profile_name or "").strip()
+
+    # 👋 FIRST MESSAGE ONLY
+    if not session.get("welcomed"):
+        session["welcomed"] = True
+        if customer_name:
+            return f"Welcome back {customer_name} 👋 What can I get you booked in for today? ✂️"
+        return "Hey 👋 What can I get you booked in for today? ✂️"
+
+    # 🧠 MEMORY STORE
+    if "data" not in session:
+        session["data"] = {}
+
+    data = session["data"]
+    msg = user_message.lower()
+
+    # 🔥 SERVICE DETECTION (FIXED)
+    if "haircut" in msg:
+        data["service"] = "haircut"
+    elif "beard" in msg:
+        data["service"] = "beard trim"
+    elif "fade" in msg:
+        data["service"] = "skin fade"
+    elif "kid" in msg:
+        data["service"] = "kids cut"
+
+    # 🔥 BARBER DETECTION
+    if "jay" in msg:
+        data["barber"] = "jay"
+    elif "mike" in msg:
+        data["barber"] = "mike"
+
+    # 🔥 TIME DETECTION (ROBUST)
+    parsed = dateparser.parse(
+        user_message,
         settings={
-            "TIMEZONE": str(TIMEZONE),
+            "TIMEZONE": timezone_name,
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
         },
     )
 
+    if parsed:
+        data["when"] = parsed.isoformat()
 
-def _safe_json_loads(value: str):
-    try:
-        return json.loads(value or "{}")
-    except:
-        return {}
+    # 🔥 AUTO BOOKING (MAIN LOGIC)
+    if all(k in data for k in ["service", "barber", "when"]):
+        try:
+            start_dt = datetime.fromisoformat(data["when"])
+            minutes = SERVICES[data["service"]]["minutes"]
 
+            if is_free(start_dt, start_dt + timedelta(minutes=minutes), data["barber"]):
+                result = create_booking(
+                    phone=phone,
+                    service_name=data["service"],
+                    start_dt=start_dt,
+                    minutes=minutes,
+                    name=customer_name or "Customer",
+                    barber=data["barber"],
+                )
 
-def _tool_defs():
-    return [
-        {
-            "type": "function",
-            "name": "book_appointment",
-            "description": "Create a booking",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "barber": {"type": "string", "enum": list(BARBERS.keys())},
-                    "service": {"type": "string", "enum": list(SERVICES.keys())},
-                    "start_iso": {"type": "string"},
-                    "when_text": {"type": "string"},
-                },
-                "required": ["barber", "service"],
-            },
-        },
-        {
-            "type": "function",
-            "name": "list_customer_bookings",
-            "description": "List bookings",
-            "parameters": {"type": "object", "properties": {}},
-        },
-        {
-            "type": "function",
-            "name": "cancel_customer_booking",
-            "description": "Cancel booking",
-            "parameters": {
-                "type": "object",
-                "properties": {"event_id": {"type": "string"}},
-                "required": ["event_id"],
-            },
-        },
-        {
-            "type": "function",
-            "name": "reschedule_customer_booking",
-            "description": "Reschedule booking",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "event_id": {"type": "string"},
-                    "new_start_iso": {"type": "string"},
-                    "when_text": {"type": "string"},
-                },
-                "required": ["event_id"],
-            },
-        },
-    ]
+                # clear memory after booking
+                session["data"] = {}
 
+                link = result.get("link", "")
 
-def _execute_tool(tool_name, args, phone, profile_name, session):
-    try:
-        phone = phone.replace("whatsapp:", "").strip()
+                return (
+                    f"Nice one {customer_name or ''} 👌 you're booked in!\n"
+                    f"📅 {start_dt.strftime('%A %I:%M %p')}\n"
+                    f"✂️ {data['service'].title()} with {data['barber'].title()}\n"
+                    f"{link}"
+                )
+            else:
+                return "That time’s taken 😅 want another time?"
 
-        # ---------------- BOOK ----------------
-        if tool_name == "book_appointment":
-            barber = args.get("barber")
-            service = args.get("service")
+        except Exception as e:
+            print("BOOK ERROR:", e)
+            return "Something went wrong booking that — try again 👍"
 
-            # Parse time
-            start_dt = None
+    # 🔥 SMART RESPONSE FLOW (NO REPEATS)
 
-            if args.get("start_iso"):
-                try:
-                    start_dt = datetime.fromisoformat(args["start_iso"])
-                except:
-                    start_dt = None
+    if "service" not in data:
+        return "What would you like to book? ✂️"
 
-            if not start_dt and args.get("when_text"):
-                start_dt = parse_natural_time(args["when_text"])
+    if "barber" not in data:
+        return "Who would you like — Jay or Mike? 💈"
 
-            if not start_dt:
-                return {"ok": False, "error": "Invalid time"}
+    if "when" not in data:
+        return "What day and time works for you? 📅"
 
-            if start_dt.hour == 0 and start_dt.minute == 0:
-                return {"ok": False, "error": "Invalid time"}
-
-            if start_dt < datetime.now(start_dt.tzinfo):
-                return {"ok": False, "error": "Time is in the past"}
-
-            minutes = SERVICES[service]["minutes"]
-            end_dt = start_dt + timedelta(minutes=minutes)
-
-            if not is_free(start_dt, end_dt, barber):
-                return {"ok": False, "error": "Slot not available"}
-
-            result = create_booking(
-                phone=phone,
-                service_name=service,
-                start_dt=start_dt,
-                minutes=minutes,
-                name=profile_name or "Customer",
-                barber=barber,
-            )
-
-            return {"ok": True, "booking": result}
-
-        # ---------------- LIST ----------------
-        if tool_name == "list_customer_bookings":
-            bookings = list_bookings(phone)
-            return {"ok": True, "bookings": bookings[:1]}
-
-        # ---------------- CANCEL ----------------
-        if tool_name == "cancel_customer_booking":
-            result = cancel_booking(args["event_id"])
-            return {"ok": bool(result)}
-
-        # ---------------- RESCHEDULE ----------------
-        if tool_name == "reschedule_customer_booking":
-            new_start = None
-
-            if args.get("new_start_iso"):
-                try:
-                    new_start = datetime.fromisoformat(args["new_start_iso"])
-                except:
-                    new_start = None
-
-            if not new_start and args.get("when_text"):
-                new_start = parse_natural_time(args["when_text"])
-
-            if not new_start:
-                return {"ok": False, "error": "Invalid time"}
-
-            result = reschedule_booking(args["event_id"], new_start)
-            return {"ok": bool(result), "booking": result}
-
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-def run_receptionist_agent(user_message, phone, profile_name, session, business_name, timezone_name):
-    msg = user_message.lower().strip()
-
-    # ---------- CONFIRM MEMORY ----------
-    if msg in ["yes", "yes please", "yeah", "ok", "book it"]:
-        pending = session.get("pending_booking")
-        if pending:
-            result = _execute_tool(
-                "book_appointment", pending, phone, profile_name, session
-            )
-            if result.get("ok"):
-                link = result.get("booking", {}).get("link", "")
-                return f"Nice one 👌 you're all booked in!\n\n📅 {link}" if link else "Nice one 👌 you're all booked in!"
-            return "Sorry, that slot is gone 😅 want another?"
-
-    instructions = f"""
-You are a friendly WhatsApp receptionist for {business_name}.
-
-- Be natural, short, human
-- Use light emojis (👌 ✂️ 📅)
-- Never be robotic
-
-Rules:
-- If user gives full booking info → book immediately
-- If unclear → ask for missing detail
-- Never guess time
-- Never book invalid times
-- Prefer latest booking when unclear
-"""
-
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        instructions=instructions,
-        input=user_message,
-        tools=_tool_defs(),
-    )
-
-    for _ in range(5):
-        tool_calls = [x for x in response.output if x.type == "function_call"]
-
-        if not tool_calls:
-            return response.output_text.strip()
-
-        outputs = []
-
-        for call in tool_calls:
-            args = _safe_json_loads(call.arguments)
-
-            # STORE pending booking
-            if call.name == "book_appointment":
-                session["pending_booking"] = args
-
-            result = _execute_tool(
-                call.name, args, phone, profile_name, session
-            )
-
-            outputs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": json.dumps(result),
-                }
-            )
-
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            previous_response_id=response.id,
-            input=outputs,
-        )
-
-    return "Something went wrong — try again 👍"
+    # fallback (rare)
+    return "Tell me what you'd like to book 👍"
