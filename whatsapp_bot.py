@@ -6,7 +6,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 from agent_helper import run_receptionist_agent
 
-app = Flask(__name__)  # ✅ THIS MUST EXIST
+app = Flask(__name__)
 
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
@@ -19,13 +19,18 @@ def get_session(phone: str) -> dict:
         SESSIONS[phone] = {
             "history": [],
             "profile_name": None,
+            "data": {},
+            "welcomed": False,
+            "pending_booking": None,
+            "pending_cancel": None,
+            "pending_reschedule": None,
         }
     return SESSIONS[phone]
 
 
 @app.route("/health", methods=["GET"])
 def health():
-    return {"ok": True}, 200
+    return {"ok": True, "service": BUSINESS_NAME}, 200
 
 
 @app.route("/whatsapp", methods=["POST"])
@@ -41,7 +46,7 @@ def whatsapp():
 
     if not incoming_msg:
         twiml = MessagingResponse()
-        twiml.message("Hey 👋 send me a message and I’ll help.")
+        twiml.message("Hey 👋 send me a message and I’ll help with your booking.")
         return str(twiml)
 
     reply = run_receptionist_agent(
@@ -63,4 +68,4 @@ def whatsapp():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
