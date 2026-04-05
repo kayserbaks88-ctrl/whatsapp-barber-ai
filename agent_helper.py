@@ -34,6 +34,7 @@ def _parse_datetime(text: str, timezone_name: str):
             "RETURN_AS_TIMEZONE_AWARE": True,
             "PREFER_DATES_FROM": "future",
             "RELATIVE_BASE": datetime.now(),
+            "PREFER_DAY_OF_MONTH": "current",
         },
     )
 
@@ -47,7 +48,7 @@ def _friendly_service(msg: str) -> str | None:
         return "beard trim"
     if "kids" in msg or "kid" in msg or "child" in msg:
         return "kids cut"
-    if "haircut" in msg or "hair cut" in msg or "cut" in msg or "trim" in msg:
+    if "haircut" in msg or "hair cut" in msg:
         return "haircut"
 
     return None
@@ -193,13 +194,44 @@ def run_receptionist_agent(
                 session["data"] = {}
                 return "I couldn’t move that booking just now 😅 try another time."
 
-    if msg_lower in NO_WORDS:
+    if msg_lower in YES_WORDS:
         if session.get("pending_booking"):
-            _clear_booking_state(session)
-            return "No problem 👍 tell me the service, barber or time you want to change."
-        if session.get("pending_cancel") or session.get("pending_reschedule"):
-            _clear_action_state(session)
-            return "No worries 👍"
+            pending = session["pending_booking"]
+
+            # 🚨 IMPORTANT: CLEAR FIRST (prevents loop)
+            session["pending_booking"] = None
+            session["data"] = {}
+
+            try:
+                start_dt = datetime.fromisoformat(pending["when"])
+                service = pending["service"]
+                barber = pending["barber"]
+                minutes = SERVICES[service]["minutes"]
+
+                if not is_free(start_dt, start_dt + timedelta(minutes=minutes), barber):
+                    return "That slot’s just gone 😅 want another time?"
+
+                result = create_booking(
+                    phone=phone,
+                    service_name=service,
+                    start_dt=start_dt,
+                    minutes=minutes,
+                    name=customer_name or "Customer",
+                    barber=barber,
+                )
+
+                day_text, time_text = _day_time_text(start_dt)
+                name_part = f"{customer_name} " if customer_name else ""
+
+                return (
+                    f"Nice one {name_part}👌 you're booked in!\n\n"
+                    f"📅 {day_text} {time_text}\n"
+                    f"✂️ {_service_label(service)} with {_barber_label(barber)}\n\n"
+                    f"📲 View booking:\n{result.get('link', '')}"
+                )
+
+            except Exception:
+                return "Something went wrong booking that 😅 try again 👍"
 
     # Cancel intent
     if "cancel" in msg_lower:
