@@ -2,7 +2,35 @@ import json
 import os
 from datetime import datetime
 from typing import Any
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import dateparser
 
+
+def parse_when(text: str, timezone_name: str):
+    tz = ZoneInfo(timezone_name)
+    now = datetime.now(tz)
+
+    text_lower = text.lower()
+
+    if "tomorrow" in text_lower:
+        base = now + timedelta(days=1)
+    elif "today" in text_lower:
+        base = now
+    else:
+        base = now
+
+    parsed = dateparser.parse(
+        text,
+        settings={
+            "TIMEZONE": timezone_name,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RELATIVE_BASE": base,
+            "PREFER_DATES_FROM": "future",
+        },
+    )
+
+    return parsed
 from openai import OpenAI
 
 from calendar_helper import (
@@ -174,9 +202,10 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
         if tool_name == "book_appointment":
             barber = args["barber"]
             service = args["service"]
-            start_dt = datetime.fromisoformat(args["start_iso"])
-            minutes = SERVICES[service]["minutes"]
-            customer_name = (args.get("customer_name") or profile_name or "").strip() or "Customer"
+            start_iso = args.get("start_iso")
+            start_dt = datetime.fromisoformat(start_iso)
+
+            customer_name = args.get("customer_name") or "Customer"
 
             result = create_booking(
                 phone=phone,
