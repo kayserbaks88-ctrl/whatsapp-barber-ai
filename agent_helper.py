@@ -1,7 +1,36 @@
 import os
 from datetime import datetime, timedelta
-
+from zoneinfo import ZoneInfo
 import dateparser
+
+
+def parse_when(text: str, timezone_name: str):
+    tz = ZoneInfo(timezone_name)
+    now = datetime.now(tz)
+
+    text_lower = text.lower()
+
+    # 🔥 FORCE tomorrow logic
+    if "tomorrow" in text_lower:
+        base = now + timedelta(days=1)
+    elif "today" in text_lower:
+        base = now
+    else:
+        base = now
+
+    parsed = dateparser.parse(
+        text,
+        settings={
+            "TIMEZONE": timezone_name,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RELATIVE_BASE": base,
+            "PREFER_DATES_FROM": "future",
+        },
+    )
+
+    return parsed
+
+
 
 from calendar_helper import (
     BARBERS,
