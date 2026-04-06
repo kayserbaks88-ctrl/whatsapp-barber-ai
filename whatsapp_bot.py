@@ -11,6 +11,7 @@ app = Flask(__name__)
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 BUSINESS_NAME = os.getenv("BUSINESS_NAME", "TrimTech AI")
 
+# Simple memory per WhatsApp number
 SESSIONS: dict[str, dict] = {}
 
 
@@ -19,11 +20,6 @@ def get_session(phone: str) -> dict:
         SESSIONS[phone] = {
             "history": [],
             "profile_name": None,
-            "data": {},
-            "welcomed": False,
-            "pending_booking": None,
-            "pending_cancel": None,
-            "pending_reschedule": None,
         }
     return SESSIONS[phone]
 
@@ -40,7 +36,6 @@ def whatsapp():
     profile_name = (request.form.get("ProfileName") or "").strip()
 
     session = get_session(from_number)
-
     if profile_name:
         session["profile_name"] = profile_name
 
@@ -58,6 +53,7 @@ def whatsapp():
         timezone_name=str(TIMEZONE),
     )
 
+    # Keep a small rolling history
     session["history"].append({"role": "user", "content": incoming_msg})
     session["history"].append({"role": "assistant", "content": reply})
     session["history"] = session["history"][-20:]
