@@ -202,20 +202,33 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
         if tool_name == "book_appointment":
             barber = args["barber"]
             service = args["service"]
-            start_iso = args.get("start_iso")
-            start_dt = datetime.fromisoformat(start_iso)
+            start_dt = datetime.fromisoformat(args["start_iso"])
+            minutes = SERVICES[service]["minutes"]
 
-            customer_name = args.get("customer_name") or "Customer"
+        customer_name = args.get("customer_name") or profile_name or "Customer"
 
-            result = create_booking(
-                phone=phone,
-                service_name=service,
-                start_dt=start_dt,
-                minutes=minutes,
-                name=customer_name,
-                barber=barber,
-            )
-            return {
+        result = create_booking(
+            phone=phone,
+            service_name=service,
+            start_dt=start_dt,
+            minutes=minutes,
+            name=customer_name,
+            barber=barber,
+        )
+
+        return result
+
+        customer_name = args.get("customer_name") or "Customer"
+
+        result = create_booking(
+            phone=phone,
+            service_name=service,
+            start_dt=start_dt,
+            minutes=minutes,
+            name=customer_name,
+            barber=barber,
+        )
+        return {
                 "ok": True,
                 "booking": result,
                 "barber": barber,

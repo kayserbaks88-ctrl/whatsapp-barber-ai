@@ -80,6 +80,8 @@ def is_free(start_dt: datetime, end_dt: datetime, barber: str, ignore_event_id: 
 
 
 def create_booking(phone: str, service_name: str, start_dt: datetime, minutes: int, name: str, barber: str) -> dict:
+    print("BOOKING ATTEMPT:", barber, service_name, start_dt)
+    print("EVENT CREATED:", created)
     service = _get_service()
     calendar_id = _calendar_id_for_barber(barber)
     end_dt = _event_end(start_dt, minutes)
