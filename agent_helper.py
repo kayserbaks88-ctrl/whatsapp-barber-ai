@@ -224,11 +224,11 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                     barber=barber,
                 )
 
-                print("BOOKED SUCCESS:", result)
+                print("BOOKED:", result)
 
                 return {
                     "ok": True,
-                     **result
+                    **result
                 }
 
             except Exception as e:
@@ -237,6 +237,9 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                     "ok": False,
                     "error": str(e)
                 }
+
+        
+
         
 
         customer_name = args.get("customer_name") or "Customer"
