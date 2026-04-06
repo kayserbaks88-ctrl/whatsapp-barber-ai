@@ -200,23 +200,44 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             }
 
         if tool_name == "book_appointment":
-            barber = args["barber"]
-            service = args["service"]
-            start_dt = datetime.fromisoformat(args["start_iso"])
-            minutes = SERVICES[service]["minutes"]
+            try:
+                barber = args["barber"]
+                service = args["service"]
+                start_iso = args.get("start_iso")
 
-        customer_name = args.get("customer_name") or profile_name or "Customer"
+                if not start_iso:
+                    return {"ok": False, "error": "Missing start time"}
 
-        result = create_booking(
-            phone=phone,
-            service_name=service,
-            start_dt=start_dt,
-            minutes=minutes,
-            name=customer_name,
-            barber=barber,
-        )
+                start_dt = datetime.fromisoformat(start_iso)
+                minutes = SERVICES[service]["minutes"]
 
-        return result
+                customer_name = args.get("customer_name") or profile_name or "Customer"
+
+                print("BOOKING:", barber, service, start_dt)
+
+                result = create_booking(
+                    phone=phone,
+                    service_name=service,
+                    start_dt=start_dt,
+                    minutes=minutes,
+                    name=customer_name,
+                    barber=barber,
+                )
+
+                print("BOOKED SUCCESS:", result)
+
+                return {
+                    "ok": True,
+                     **result
+                }
+
+            except Exception as e:
+                print("BOOKING ERROR:", str(e))
+                return {
+                    "ok": False,
+                    "error": str(e)
+                }
+        
 
         customer_name = args.get("customer_name") or "Customer"
 
