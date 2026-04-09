@@ -16,7 +16,8 @@ def parse_when_text(text: str):
     now = datetime.now(TIMEZONE)
     text_lower = text.lower()
 
-    parsed = dateparser.parse(
+    # Step 1: parse ONLY time
+    parsed_time = dateparser.parse(
         text,
         settings={
             "TIMEZONE": str(TIMEZONE),
@@ -25,8 +26,11 @@ def parse_when_text(text: str):
         },
     )
 
-    if not parsed:
+    if not parsed_time:
         return None
+
+    hour = parsed_time.hour
+    minute = parsed_time.minute
 
     weekdays = {
         "monday": 0,
@@ -38,45 +42,43 @@ def parse_when_text(text: str):
         "sunday": 6,
     }
 
-    # 🧠 HANDLE "today"
+    # 🧠 TODAY
     if "today" in text_lower:
-        parsed = parsed.replace(
-            year=now.year, month=now.month, day=now.day
-        )
+        target_date = now
 
-    # 🧠 HANDLE "tomorrow"
+    # 🧠 TOMORROW
     elif "tomorrow" in text_lower:
-        tomorrow = now + timedelta(days=1)
-        parsed = parsed.replace(
-            year=tomorrow.year, month=tomorrow.month, day=tomorrow.day
-        )
+        target_date = now + timedelta(days=1)
 
-    # 🧠 HANDLE WEEKDAYS (Tuesday, Friday etc.)
+    # 🧠 WEEKDAYS
     else:
+        target_date = now
+
         for day_name, day_num in weekdays.items():
             if day_name in text_lower:
-                current_weekday = now.weekday()
+                current_day = now.weekday()
+                days_ahead = day_num - current_day
 
-                days_ahead = day_num - current_weekday
-
-                # 🔥 KEY LOGIC
                 if days_ahead <= 0:
-                    days_ahead += 7  # always future
+                    days_ahead += 7
 
-                # If user explicitly says "next Tuesday"
                 if "next" in text_lower:
                     days_ahead += 7
 
                 target_date = now + timedelta(days=days_ahead)
-
-                parsed = parsed.replace(
-                    year=target_date.year,
-                    month=target_date.month,
-                    day=target_date.day,
-                )
                 break
 
-    return parsed
+    # 🔥 BUILD FINAL DATE CLEANLY
+    final_dt = datetime(
+        year=target_date.year,
+        month=target_date.month,
+        day=target_date.day,
+        hour=hour,
+        minute=minute,
+        tzinfo=TIMEZONE,
+    )
+
+    return final_dt
 from openai import OpenAI
 
 from calendar_helper import (
