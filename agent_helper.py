@@ -6,29 +6,75 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import dateparser
 
+TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 
-def parse_when(text: str, timezone_name: str):
-    tz = ZoneInfo(timezone_name)
-    now = datetime.now(tz)
 
+def parse_when_text(text: str):
+    if not text:
+        return None
+
+    now = datetime.now(TIMEZONE)
     text_lower = text.lower()
-
-    if "tomorrow" in text_lower:
-        base = now + timedelta(days=1)
-    elif "today" in text_lower:
-        base = now
-    else:
-        base = now
 
     parsed = dateparser.parse(
         text,
         settings={
-            "TIMEZONE": timezone_name,
+            "TIMEZONE": str(TIMEZONE),
             "RETURN_AS_TIMEZONE_AWARE": True,
-            "RELATIVE_BASE": base,
-            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": now,
         },
     )
+
+    if not parsed:
+        return None
+
+    weekdays = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
+
+    # 🧠 HANDLE "today"
+    if "today" in text_lower:
+        parsed = parsed.replace(
+            year=now.year, month=now.month, day=now.day
+        )
+
+    # 🧠 HANDLE "tomorrow"
+    elif "tomorrow" in text_lower:
+        tomorrow = now + timedelta(days=1)
+        parsed = parsed.replace(
+            year=tomorrow.year, month=tomorrow.month, day=tomorrow.day
+        )
+
+    # 🧠 HANDLE WEEKDAYS (Tuesday, Friday etc.)
+    else:
+        for day_name, day_num in weekdays.items():
+            if day_name in text_lower:
+                current_weekday = now.weekday()
+
+                days_ahead = day_num - current_weekday
+
+                # 🔥 KEY LOGIC
+                if days_ahead <= 0:
+                    days_ahead += 7  # always future
+
+                # If user explicitly says "next Tuesday"
+                if "next" in text_lower:
+                    days_ahead += 7
+
+                target_date = now + timedelta(days=days_ahead)
+
+                parsed = parsed.replace(
+                    year=target_date.year,
+                    month=target_date.month,
+                    day=target_date.day,
+                )
+                break
 
     return parsed
 from openai import OpenAI
