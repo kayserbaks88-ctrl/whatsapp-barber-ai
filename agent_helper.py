@@ -286,13 +286,12 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                     "error": str(e)
                 }
 
-        
-
-        
-
         customer_name = args.get("customer_name") or "Customer"
 
-        when_text = args.get("when") or args.get("start_dt")
+        when_text = args.get("when")
+        if not when_text:
+            return {"ok": False, "error": "Missing date/time"}
+
         print("RAW INPUT:", when_text)
 
         start_dt = parse_when_text(when_text)
@@ -306,6 +305,7 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             name=customer_name,
             barber=barber,
         )
+
         return {
                 "ok": True,
                 "booking": result,
