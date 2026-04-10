@@ -431,13 +431,24 @@ Recent conversation:
         for call in tool_calls:
             args = _safe_json_loads(call.arguments)
             result = _execute_tool(call.name, args, phone=phone, profile_name=profile_name)
-            tool_outputs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": json.dumps(result),
-                }
-            )
+
+            # 🔥 RETURN REAL BOOKING RESPONSE
+            if result.get("ok") and result.get("result"):
+                booking = result["result"]
+
+                return f"""✅ You're all set!
+
+        ✂️ {booking['service'].title()} with {booking['barber'].title()}
+        📅 {booking['start']}
+        ⏱️ Duration: {SERVICES.get(booking['service'], {}).get('minutes', 30)} mins
+
+        🔗 {booking['link']}"""
+
+            tool_outputs.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps(result),
+            })
 
         response = client.responses.create(
             model=OPENAI_MODEL,
