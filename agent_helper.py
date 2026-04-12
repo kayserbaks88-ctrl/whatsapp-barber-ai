@@ -387,6 +387,9 @@ Style:
 - NEVER suggest or invent alternative dates or times.
 - If checking availability, ONLY use the exact date/time provided by the user.
 - If unavailable, ask the user for another time instead of suggesting one.
+- NEVER say "is available on [date]"
+- ONLY confirm the exact time the user asked for
+- If unavailable, say "That time isn’t available"
 
 Business context:
 - Timezone: {timezone_name}
@@ -439,7 +442,7 @@ Recent conversation:
             result = _execute_tool(call.name, args, phone=phone, profile_name=profile_name)
 
             # 🔥 RETURN REAL BOOKING RESPONSE
-            if result.get("ok") and result.get("result"):
+            if result.get("ok"):
                 booking = result["result"]
 
                 return f"""✅ You're all set!
