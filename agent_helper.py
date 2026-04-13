@@ -443,15 +443,15 @@ Recent conversation:
 
             # 🔥 RETURN REAL BOOKING RESPONSE
             if result.get("ok"):
-                booking = result["result"]
+                booking = result.get("result", {})
 
                 return f"""✅ You're all set!
 
-        ✂️ {booking['service'].title()} with {booking['barber'].title()}
-        📅 {booking['start']}
-        ⏱️ Duration: {SERVICES.get(booking['service'], {}).get('minutes', 30)} mins
+            ✂️ {booking.get('service', '').title()} with {booking.get('barber', '').title()}
+            📅 {booking.get('start')}
+            ⏱️ Duration: {SERVICES.get(booking.get('service', ''), {}).get('minutes', 30)} mins
 
-        🔗 {booking['link']}"""
+            🔗 {booking.get('link', '')}"""
 
             tool_outputs.append({
                 "type": "function_call_output",
