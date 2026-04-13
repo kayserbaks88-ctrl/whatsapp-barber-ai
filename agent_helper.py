@@ -14,33 +14,18 @@ def parse_when_text(text: str):
         return None
 
     now = datetime.now(TIMEZONE)
-    text_lower = text.lower()
 
-    # Step 1: parse ONLY time
-    parsed_time = dateparser.parse(
+    parsed = dateparser.parse(
         text,
         settings={
             "TIMEZONE": str(TIMEZONE),
             "RETURN_AS_TIMEZONE_AWARE": True,
+            "PREFER_DATES_FROM": "future",   # 🔥 fixes past dates
             "RELATIVE_BASE": now,
         },
     )
 
-    if not parsed_time:
-        return None
-
-    hour = parsed_time.hour
-    minute = parsed_time.minute
-
-    weekdays = {
-        "monday": 0,
-        "tuesday": 1,
-        "wednesday": 2,
-        "thursday": 3,
-        "friday": 4,
-        "saturday": 5,
-        "sunday": 6,
-    }
+    return parsed
 
     # 🧠 TODAY
     if "today" in text_lower:
