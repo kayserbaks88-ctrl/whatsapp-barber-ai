@@ -261,8 +261,9 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
                 return {
                     "ok": True,
-                    **result
+                    "result": result   # 🔥 THIS LINE FIXES YOUR LINK
                 }
+                
 
             except Exception as e:
                 print("BOOKING ERROR:", str(e))
@@ -428,7 +429,7 @@ Recent conversation:
 
             # 🔥 RETURN REAL BOOKING RESPONSE
             if result.get("ok"):
-                booking = result.get("result", {})
+                booking = result.get("result") or result
 
                 return f"""✅ You're all set!
 
