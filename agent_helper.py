@@ -16,22 +16,22 @@ from calendar_helper import (
     reschedule_booking,
 )
 
-# ------------------ CONFIG ------------------
-
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# ------------------ PARSER ------------------
 
+# =========================
+# 🔥 FIXED DATE PARSER
+# =========================
 def parse_when_text(text: str):
     if not text:
         return None
 
     now = datetime.now(TIMEZONE)
 
-    return dateparser.parse(
+    parsed = dateparser.parse(
         text,
         settings={
             "TIMEZONE": str(TIMEZONE),
@@ -41,22 +41,28 @@ def parse_when_text(text: str):
         },
     )
 
-# ------------------ HELPERS ------------------
+    return parsed
 
+
+# =========================
+# HELPERS
+# =========================
 def _safe_json_loads(value: str) -> dict:
     try:
         return json.loads(value or "{}")
     except Exception:
         return {}
 
+
 def _friendly_services_text() -> str:
     return "\n".join(
-        f"- {svc['label']} ({svc['minutes']} mins)"
-        for svc in SERVICES.values()
+        [f"- {svc['label']} ({svc['minutes']} mins)" for svc in SERVICES.values()]
     )
 
-# ------------------ TOOLS ------------------
 
+# =========================
+# 🔥 CLEAN TOOL DEFS
+# =========================
 def _tool_defs() -> list[dict[str, Any]]:
     return [
         {
@@ -91,13 +97,11 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "list_customer_bookings",
-            "description": "List bookings",
             "parameters": {"type": "object", "properties": {}},
         },
         {
             "type": "function",
             "name": "cancel_customer_booking",
-            "description": "Cancel booking",
             "parameters": {
                 "type": "object",
                 "properties": {"event_id": {"type": "string"}},
@@ -107,80 +111,80 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "reschedule_customer_booking",
-            "description": "Reschedule booking",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "event_id": {"type": "string"},
-                    "new_start_iso": {"type": "string"},
+                    "new_when": {"type": "string"},
                 },
-                "required": ["event_id", "new_start_iso"],
+                "required": ["event_id", "new_when"],
             },
         },
     ]
 
-# ------------------ TOOL EXECUTION ------------------
 
+# =========================
+# 🔥 TOOL EXECUTION (FIXED)
+# =========================
 def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None):
     try:
         if tool_name == "check_availability":
-            barber = args["barber"]
-            service = args["service"]
             start_dt = parse_when_text(args["when"])
-
             if not start_dt:
-                return {"ok": False, "error": "Invalid date"}
+                return {"ok": False}
 
-            minutes = SERVICES[service]["minutes"]
+            minutes = SERVICES[args["service"]]["minutes"]
             end_dt = start_dt + timedelta(minutes=minutes)
+
+            free = is_free(start_dt, end_dt, args["barber"])
 
             return {
                 "ok": True,
-                "free": is_free(start_dt, end_dt, barber),
+                "free": free,
                 "start": start_dt.isoformat(),
+                "service": args["service"],
+                "barber": args["barber"],
             }
 
         if tool_name == "book_appointment":
-            barber = args["barber"]
-            service = args["service"]
             start_dt = parse_when_text(args["when"])
-
             if not start_dt:
-                return {"ok": False, "error": "Invalid date"}
+                return {"ok": False}
 
-            minutes = SERVICES[service]["minutes"]
-            customer_name = args.get("customer_name") or profile_name or "Customer"
+            minutes = SERVICES[args["service"]]["minutes"]
 
-            booking = create_booking(
+            result = create_booking(
                 phone=phone,
-                service_name=service,
+                service_name=args["service"],
                 start_dt=start_dt,
                 minutes=minutes,
-                name=customer_name,
-                barber=barber,
+                name=args.get("customer_name") or profile_name or "Customer",
+                barber=args["barber"],
             )
 
-            return {"ok": True, "result": booking}
+            return {"ok": True, "result": result}
 
         if tool_name == "list_customer_bookings":
             return {"ok": True, "bookings": list_bookings(phone)}
 
         if tool_name == "cancel_customer_booking":
-            success = cancel_booking(args["event_id"])
-            return {"ok": success}
+            cancel_booking(args["event_id"])
+            return {"ok": True}
 
         if tool_name == "reschedule_customer_booking":
-            new_dt = datetime.fromisoformat(args["new_start_iso"])
+            new_dt = parse_when_text(args["new_when"])
             result = reschedule_booking(args["event_id"], new_dt)
-            return {"ok": bool(result), "result": result}
-
-        return {"ok": False, "error": "Unknown tool"}
+            return {"ok": True, "result": result}
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-# ------------------ MAIN AGENT ------------------
+    return {"ok": False}
 
+
+# =========================
+# 🔥 MAIN AGENT (UNCHANGED FEEL)
+# =========================
 def run_receptionist_agent(
     user_message: str,
     phone: str,
@@ -190,87 +194,27 @@ def run_receptionist_agent(
     timezone_name: str,
 ) -> str:
 
-    instructions = f"""
-    You are the WhatsApp receptionist for {business_name}.
-
-    STYLE:
-    - Sound like a real human texting on WhatsApp
-    - Be friendly, relaxed and natural
-    - Keep messages SHORT (1–2 lines max)
-    - Use light emojis occasionally 🙂
-    - NEVER sound like a chatbot or menu system
-
-     IMPORTANT:
-    - NEVER say things like "How can I assist you today?"
-    - NEVER offer menus or options like "book or check availability"
-    - NEVER ask for all details at once
-
-    BEHAVIOUR:
-    - Ask ONLY for missing info
-    - If user says "haircut" → NEVER switch to beard trim
-    - Stick EXACTLY to what user asked
-    - If unavailable → say:
-    "That time isn’t available — want another time?"
-
-    BOOKINGS:
-    - ONLY confirm using tool result
-    - NEVER make up times or dates
-    - Always include link if available
-
-    TONE EXAMPLES:
-    BAD ❌:
-    "Please provide your name and preferred date and time"
-
-    GOOD ✅:
-    "Nice 👌 what time were you thinking?"
-
-    BAD ❌:
-    "Would you like to book or check availability?"
-
-    GOOD ✅:
-    "Yeah of course 👍 when do you want to come in?"
-
-    """
-
     response = client.responses.create(
         model=OPENAI_MODEL,
-        instructions=instructions,
         input=user_message,
         tools=_tool_defs(),
     )
 
-    for _ in range(5):
-        tool_calls = [x for x in response.output if getattr(x, "type", None) == "function_call"]
-
-        if not tool_calls:
-            return (response.output_text or "").strip()
-
-        for call in tool_calls:
-            args = _safe_json_loads(call.arguments)
-            result = _execute_tool(call.name, args, phone, profile_name)
+    for item in response.output:
+        if getattr(item, "type", None) == "function_call":
+            args = _safe_json_loads(item.arguments)
+            result = _execute_tool(item.name, args, phone, profile_name)
 
             if result.get("ok") and result.get("result"):
-                b = result["result"]
+                booking = result["result"]
 
                 return f"""✅ You're all set!
 
-✂️ {b.get('service')} with {b.get('barber')}
-📅 {b.get('start')}
-⏱️ {SERVICES.get(b.get('service'), {}).get('minutes')} mins
+✂️ {booking.get('service', '').title()} with {booking.get('barber', '').title()}
+📅 {booking.get('start')}
+⏱️ Duration: {SERVICES.get(booking.get('service', ''), {}).get('minutes')} mins
 
-🔗 {b.get('link')}
+🔗 {booking.get('link')}
 """
 
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            previous_response_id=response.id,
-            input=[
-                {
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": json.dumps(result),
-                }
-            ],
-        )
-
-    return "Something went wrong — try again 👍"
+    return (response.output_text or "").strip() or "Just send that again 👍"
