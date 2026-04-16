@@ -1,9 +1,8 @@
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
-import dateparser
+
 from openai import OpenAI
 
 from calendar_helper import (
@@ -16,37 +15,10 @@ from calendar_helper import (
     reschedule_booking,
 )
 
-TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Europe/London"))
-
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
-# =========================
-# 🔥 FIXED DATE PARSER
-# =========================
-def parse_when_text(text: str):
-    if not text:
-        return None
-
-    now = datetime.now(TIMEZONE)
-
-    parsed = dateparser.parse(
-        text,
-        settings={
-            "TIMEZONE": str(TIMEZONE),
-            "RETURN_AS_TIMEZONE_AWARE": True,
-            "PREFER_DATES_FROM": "future",
-            "RELATIVE_BASE": now,
-        },
-    )
-
-    return parsed
-
-
-# =========================
-# HELPERS
-# =========================
 def _safe_json_loads(value: str) -> dict:
     try:
         return json.loads(value or "{}")
@@ -55,136 +27,214 @@ def _safe_json_loads(value: str) -> dict:
 
 
 def _friendly_services_text() -> str:
-    return "\n".join(
-        [f"- {svc['label']} ({svc['minutes']} mins)" for svc in SERVICES.values()]
-    )
+    lines = []
+    for key, svc in SERVICES.items():
+        lines.append(f"- {svc['label']} ({svc['minutes']} mins)")
+    return "\n".join(lines)
 
 
-# =========================
-# 🔥 CLEAN TOOL DEFS
-# =========================
 def _tool_defs() -> list[dict[str, Any]]:
     return [
         {
             "type": "function",
+            "name": "show_services",
+            "description": "Show the services menu when the user asks what services are available, prices/durations, or seems unsure what to book.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
             "name": "check_availability",
-            "description": "Check if a time is free",
+            "description": "Check if a barber is free at a specific start time for a service.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "barber": {"type": "string", "enum": list(BARBERS.keys())},
-                    "service": {"type": "string", "enum": list(SERVICES.keys())},
-                    "when": {"type": "string"},
+                    "barber": {
+                        "type": "string",
+                        "enum": list(BARBERS.keys()),
+                    },
+                    "service": {
+                        "type": "string",
+                        "enum": list(SERVICES.keys()),
+                    },
+                    "start_iso": {
+                        "type": "string",
+                        "description": "Booking start datetime in ISO 8601 format with timezone offset.",
+                    },
                 },
-                "required": ["barber", "service", "when"],
+                "required": ["barber", "service", "start_iso"],
+                "additionalProperties": False,
             },
         },
         {
             "type": "function",
             "name": "book_appointment",
-            "description": "Create a booking",
+            "description": "Create a booking when the user has given enough details.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "barber": {"type": "string"},
-                    "service": {"type": "string"},
-                    "when": {"type": "string"},
-                    "customer_name": {"type": "string"},
+                    "barber": {
+                        "type": "string",
+                        "enum": list(BARBERS.keys()),
+                    },
+                    "service": {
+                        "type": "string",
+                        "enum": list(SERVICES.keys()),
+                    },
+                    "start_iso": {
+                        "type": "string",
+                        "description": "Booking start datetime in ISO 8601 format with timezone offset.",
+                    },
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Customer name if known.",
+                    },
                 },
-                "required": ["barber", "service", "when"],
+                "required": ["barber", "service", "start_iso"],
+                "additionalProperties": False,
             },
         },
         {
             "type": "function",
             "name": "list_customer_bookings",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "List the user's upcoming bookings by phone number.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         },
         {
             "type": "function",
             "name": "cancel_customer_booking",
+            "description": "Cancel one of the user's bookings by event id. Use after first listing bookings if needed.",
             "parameters": {
                 "type": "object",
-                "properties": {"event_id": {"type": "string"}},
+                "properties": {
+                    "event_id": {
+                        "type": "string",
+                        "description": "The event id of the booking to cancel.",
+                    }
+                },
                 "required": ["event_id"],
+                "additionalProperties": False,
             },
         },
         {
             "type": "function",
             "name": "reschedule_customer_booking",
+            "description": "Move an existing booking to a new date/time.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "string"},
-                    "new_when": {"type": "string"},
+                    "event_id": {
+                        "type": "string",
+                        "description": "The event id of the booking to move.",
+                    },
+                    "new_start_iso": {
+                        "type": "string",
+                        "description": "New appointment start datetime in ISO 8601 format with timezone offset.",
+                    },
                 },
-                "required": ["event_id", "new_when"],
+                "required": ["event_id", "new_start_iso"],
+                "additionalProperties": False,
             },
         },
     ]
 
 
-# =========================
-# 🔥 TOOL EXECUTION (FIXED)
-# =========================
-def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None):
+def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None) -> dict:
     try:
+        if tool_name == "show_services":
+            return {
+                "ok": True,
+                "services": SERVICES,
+                "text": _friendly_services_text(),
+            }
+
         if tool_name == "check_availability":
-            start_dt = parse_when_text(args["when"])
-            if not start_dt:
-                return {"ok": False}
-
-            minutes = SERVICES[args["service"]]["minutes"]
-            end_dt = start_dt + timedelta(minutes=minutes)
-
-            free = is_free(start_dt, end_dt, args["barber"])
-
+            barber = args["barber"]
+            service = args["service"]
+            start_dt = datetime.fromisoformat(args["start_iso"])
+            minutes = SERVICES[service]["minutes"]
+            end_dt = start_dt.replace() + __import__("datetime").timedelta(minutes=minutes)
+            free = is_free(start_dt, end_dt, barber)
             return {
                 "ok": True,
                 "free": free,
-                "start": start_dt.isoformat(),
-                "service": args["service"],
-                "barber": args["barber"],
+                "barber": barber,
+                "service": service,
+                "start_iso": start_dt.isoformat(),
+                "minutes": minutes,
             }
 
         if tool_name == "book_appointment":
-            start_dt = parse_when_text(args["when"])
-            if not start_dt:
-                return {"ok": False}
-
-            minutes = SERVICES[args["service"]]["minutes"]
+            barber = args["barber"]
+            service = args["service"]
+            start_dt = datetime.fromisoformat(args["start_iso"])
+            minutes = SERVICES[service]["minutes"]
+            customer_name = (args.get("customer_name") or profile_name or "").strip() or "Customer"
 
             result = create_booking(
                 phone=phone,
-                service_name=args["service"],
+                service_name=service,
                 start_dt=start_dt,
                 minutes=minutes,
-                name=args.get("customer_name") or profile_name or "Customer",
-                barber=args["barber"],
+                name=customer_name,
+                barber=barber,
             )
-
-            return {"ok": True, "result": result}
+            return {
+                "ok": True,
+                "booking": result,
+                "barber": barber,
+                "service": service,
+                "start_iso": start_dt.isoformat(),
+                "minutes": minutes,
+                "customer_name": customer_name,
+            }
 
         if tool_name == "list_customer_bookings":
-            return {"ok": True, "bookings": list_bookings(phone)}
+            bookings = list_bookings(phone)
+            return {
+                "ok": True,
+                "bookings": bookings,
+            }
 
         if tool_name == "cancel_customer_booking":
-            cancel_booking(args["event_id"])
-            return {"ok": True}
+            event_id = args["event_id"]
+            result = cancel_booking(event_id)
+            return {
+                "ok": bool(result),
+                "cancelled": bool(result),
+                "event_id": event_id,
+            }
 
         if tool_name == "reschedule_customer_booking":
-            new_dt = parse_when_text(args["new_when"])
-            result = reschedule_booking(args["event_id"], new_dt)
-            return {"ok": True, "result": result}
+            event_id = args["event_id"]
+            new_start = datetime.fromisoformat(args["new_start_iso"])
+            result = reschedule_booking(event_id, new_start)
+            return {
+                "ok": bool(result),
+                "rescheduled": bool(result),
+                "event_id": event_id,
+                "new_start_iso": new_start.isoformat(),
+                "result": result,
+            }
+
+        return {"ok": False, "error": f"Unknown tool: {tool_name}"}
 
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": str(e),
+            "tool_name": tool_name,
+            "args": args,
+        }
 
-    return {"ok": False}
 
-
-# =========================
-# 🔥 MAIN AGENT (UNCHANGED FEEL)
-# =========================
 def run_receptionist_agent(
     user_message: str,
     phone: str,
@@ -193,28 +243,86 @@ def run_receptionist_agent(
     business_name: str,
     timezone_name: str,
 ) -> str:
+    customer_name = (profile_name or "").strip()
+
+    recent_history = session.get("history", [])[-12:]
+    history_text = ""
+    for item in recent_history:
+        role = item.get("role", "user")
+        content = item.get("content", "")
+        history_text += f"{role.upper()}: {content}\n"
+
+    instructions = f"""
+You are the WhatsApp receptionist for {business_name}.
+
+Style:
+- Sound like a friendly human receptionist.
+- Use natural WhatsApp language.
+- Use a few light emojis, not too many.
+- Be warm, clear, and business-like.
+- Never mention tools, JSON, schemas, function calls, or internal logic.
+
+Business context:
+- Timezone: {timezone_name}
+- Customer phone: {phone}
+- Customer profile name: {customer_name or "unknown"}
+
+Barbers:
+{json.dumps(BARBERS, indent=2)}
+
+Services:
+{json.dumps(SERVICES, indent=2)}
+
+Rules:
+- Prefer natural conversation over rigid menus.
+- Only show the services menu if the user asks what is available, pricing/duration, or they are too vague.
+- If booking info is incomplete, ask only for the missing detail.
+- If the user wants to cancel or reschedule, first identify the booking clearly.
+- If there is exactly one upcoming booking and the user says "cancel it" or "move it", you may use that booking.
+- Always use tools for booking, listing, cancelling, rescheduling, or availability checks.
+- Do not pretend a booking/cancel/reschedule succeeded unless the tool result says it succeeded.
+- For successful bookings, confirm barber, service, date, time, and include the calendar link if present.
+- For list_bookings results, summarise them neatly.
+- Keep replies short and natural.
+
+Recent conversation:
+{history_text}
+""".strip()
 
     response = client.responses.create(
         model=OPENAI_MODEL,
+        instructions=instructions,
         input=user_message,
         tools=_tool_defs(),
     )
 
-    for item in response.output:
-        if getattr(item, "type", None) == "function_call":
-            args = _safe_json_loads(item.arguments)
-            result = _execute_tool(item.name, args, phone, profile_name)
+    # Tool loop
+    for _ in range(6):
+        tool_calls = [item for item in response.output if getattr(item, "type", None) == "function_call"]
 
-            if result.get("ok") and result.get("result"):
-                booking = result["result"]
+        if not tool_calls:
+            text = (response.output_text or "").strip()
+            if text:
+                return text
+            return "No worries 👍 I didn’t quite catch that. Tell me what you’d like to do with your booking."
 
-                return f"""✅ You're all set!
+        tool_outputs = []
 
-✂️ {booking.get('service', '').title()} with {booking.get('barber', '').title()}
-📅 {booking.get('start')}
-⏱️ Duration: {SERVICES.get(booking.get('service', ''), {}).get('minutes')} mins
+        for call in tool_calls:
+            args = _safe_json_loads(call.arguments)
+            result = _execute_tool(call.name, args, phone=phone, profile_name=profile_name)
+            tool_outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call.call_id,
+                    "output": json.dumps(result),
+                }
+            )
 
-🔗 {booking.get('link')}
-"""
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            previous_response_id=response.id,
+            input=tool_outputs,
+        )
 
-    return (response.output_text or "").strip() or "Just send that again 👍"
+    return "Sorry — something got stuck on my side. Send that again and I’ll sort it 👍"
