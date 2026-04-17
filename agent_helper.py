@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from typing import Any
+import dateparser
 
 from openai import OpenAI
 
@@ -158,7 +159,14 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
         if tool_name == "check_availability":
             barber = args["barber"]
             service = args["service"]
-            start_dt = datetime.fromisoformat(args["start_iso"])
+            from dateparser import parse
+
+            start_dt = parse(
+                args.get("start_iso"),
+                settings={
+                    "PREFER_DATES_FROM": "future"
+                }
+            )
             minutes = SERVICES[service]["minutes"]
             end_dt = start_dt.replace() + __import__("datetime").timedelta(minutes=minutes)
             free = is_free(start_dt, end_dt, barber)
@@ -174,7 +182,17 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
         if tool_name == "book_appointment":
             barber = args["barber"]
             service = args["service"]
-            start_dt = datetime.fromisoformat(args["start_iso"])
+            from dateparser import parse
+
+            when_text = args.get("start_iso")  # AI version (fallback)
+
+            # 🔥 use user message instead (this is the fix)
+            start_dt = parse(
+                when_text,
+                settings={
+                    "PREFER_DATES_FROM": "future"
+                }
+            )
             minutes = SERVICES[service]["minutes"]
             customer_name = (args.get("customer_name") or profile_name or "").strip() or "Customer"
 
