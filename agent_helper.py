@@ -328,7 +328,13 @@ Recent conversation:
 
         for call in tool_calls:
             args = _safe_json_loads(call.arguments)
-            result = _execute_tool(call.name, args, phone=phone, profile_name=profile_name)
+            result = _execute_tool(
+                call.name,
+                args,
+                phone=phone,
+                profile_name=profile_name,
+                user_message=user_message   # 🔥 ADD THIS
+            )
             tool_outputs.append(
                 {
                     "type": "function_call_output",
