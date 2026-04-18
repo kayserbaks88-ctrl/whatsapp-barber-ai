@@ -147,7 +147,7 @@ def _tool_defs() -> list[dict[str, Any]]:
     ]
 
 
-def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None) -> dict:
+def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None, user_message: str = "") -> dict:
     try:
         if tool_name == "show_services":
             return {
