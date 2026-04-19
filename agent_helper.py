@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Any
 import dateparser
 
+
+
 from openai import OpenAI
 
 from calendar_helper import (
@@ -39,7 +41,7 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "show_services",
-            "description": "Show the services menu when the user asks what services are available, prices/durations, or seems unsure what to book.",
+            "description": "Show available services",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -49,7 +51,7 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "check_availability",
-            "description": "Check if a barber is free at a specific start time for a service.",
+            "description": "Check if a barber is free",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -61,19 +63,19 @@ def _tool_defs() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(SERVICES.keys()),
                     },
-                    "start_iso": {
+                    "when": {
                         "type": "string",
-                        "description": "Booking start datetime in ISO 8601 format with timezone offset.",
+                        "description": "Natural time like 'tomorrow 3pm'",
                     },
                 },
-                "required": ["barber", "service", "start_iso"],
+                "required": ["barber", "service", "when"],
                 "additionalProperties": False,
             },
         },
         {
             "type": "function",
             "name": "book_appointment",
-            "description": "Create a booking when the user has given enough details.",
+            "description": "Create a booking",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -85,23 +87,22 @@ def _tool_defs() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(SERVICES.keys()),
                     },
-                    "start_iso": {
+                    "when": {
                         "type": "string",
-                        "description": "Booking start datetime in ISO 8601 format with timezone offset.",
+                        "description": "Natural time like 'tomorrow 3pm'",
                     },
                     "customer_name": {
                         "type": "string",
-                        "description": "Customer name if known.",
                     },
                 },
-                "required": ["barber", "service", "start_iso"],
+                "required": ["barber", "service", "when"],
                 "additionalProperties": False,
             },
         },
         {
             "type": "function",
             "name": "list_customer_bookings",
-            "description": "List the user's upcoming bookings by phone number.",
+            "description": "List bookings",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -111,14 +112,11 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "cancel_customer_booking",
-            "description": "Cancel one of the user's bookings by event id. Use after first listing bookings if needed.",
+            "description": "Cancel booking",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {
-                        "type": "string",
-                        "description": "The event id of the booking to cancel.",
-                    }
+                    "event_id": {"type": "string"},
                 },
                 "required": ["event_id"],
                 "additionalProperties": False,
@@ -127,20 +125,14 @@ def _tool_defs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "reschedule_customer_booking",
-            "description": "Move an existing booking to a new date/time.",
+            "description": "Reschedule booking",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {
-                        "type": "string",
-                        "description": "The event id of the booking to move.",
-                    },
-                    "new_start_iso": {
-                        "type": "string",
-                        "description": "New appointment start datetime in ISO 8601 format with timezone offset.",
-                    },
+                    "event_id": {"type": "string"},
+                    "when": {"type": "string"},
                 },
-                "required": ["event_id", "new_start_iso"],
+                "required": ["event_id", "when"],
                 "additionalProperties": False,
             },
         },
@@ -161,10 +153,14 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             service = args["service"]
             from dateparser import parse
 
+            when_text = args.get("when") or args.get("start_iso")
+
             start_dt = parse(
-                args.get("start_iso"),
+                when_text,
                 settings={
-                    "PREFER_DATES_FROM": "future"
+                    "PREFER_DATES_FROM": "future",
+                    "TIMEZONE": "Europe/London",
+                    "RETURN_AS_TIMEZONE_AWARE": True,
                 }
             )
             minutes = SERVICES[service]["minutes"]
@@ -184,7 +180,7 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             service = args["service"]
             from dateparser import parse
 
-            when_text = args.get("start_iso")  # AI version (fallback)
+            when_text = args.get("when")  # AI version (fallback)
 
             # 🔥 use user message instead (this is the fix)
             start_dt = parse(
