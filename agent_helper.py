@@ -183,12 +183,18 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             when_text = args.get("when")  # AI version (fallback)
 
             # 🔥 use user message instead (this is the fix)
-            start_dt = parse(
+            start_dt = dateparser.parse(
                 when_text,
                 settings={
-                    "PREFER_DATES_FROM": "future"
-                }
+                    "PREFER_DATES_FROM": "future",
+                    "RETURN_AS_TIMEZONE_AWARE": False,  # 🔥 critical
+                },
             )
+            from zoneinfo import ZoneInfo
+
+            start_dt = start_dt.replace(tzinfo=ZoneInfo("Europe/London"))
+            print("FINAL BOOKING TIME:", start_dt)
+            
             minutes = SERVICES[service]["minutes"]
             customer_name = (args.get("customer_name") or profile_name or "").strip() or "Customer"
 
