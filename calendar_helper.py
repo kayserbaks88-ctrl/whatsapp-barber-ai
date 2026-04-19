@@ -115,7 +115,11 @@ def create_booking(phone: str, service_name: str, start_dt: datetime, minutes: i
             }
         },
     }
-
+    print("RAW INPUT:", start_dt)
+    
+    print("FINAL BOOKING TIME:", start_dt)
+    print("TIMEZONE:", start_dt.tzinfo)
+    
     created = service.events().insert(calendarId=calendar_id, body=event).execute()
 
     return {
