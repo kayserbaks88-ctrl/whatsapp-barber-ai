@@ -224,27 +224,69 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             }
 
         if tool_name == "cancel_customer_booking":
-            event_id = args["event_id"]
+            bookings = list_bookings(phone)
+
+            if not bookings:
+                return {"ok": True, "message": "No bookings found"}
+
+            if len(bookings) > 1:
+                return {"ok": True, "message": "multiple_bookings", "bookings": bookings}
+
+            event_id = bookings[0]["id"]
+
             result = cancel_booking(event_id)
+
             return {
-                "ok": bool(result),
+                "ok": True,
                 "cancelled": bool(result),
-                "event_id": event_id,
             }
 
         if tool_name == "reschedule_customer_booking":
-            event_id = args["event_id"]
-            new_start = datetime.fromisoformat(args["new_start_iso"])
-            result = reschedule_booking(event_id, new_start)
-            return {
-                "ok": bool(result),
-                "rescheduled": bool(result),
-                "event_id": event_id,
-                "new_start_iso": new_start.isoformat(),
-                "result": result,
-            }
+            import dateparser
+            from zoneinfo import ZoneInfo
 
-        return {"ok": False, "error": f"Unknown tool: {tool_name}"}
+            TIMEZONE = ZoneInfo("Europe/London")
+
+            bookings = list_bookings(phone)
+
+            if not bookings:
+                return {"ok": True, "message": "No bookings found"}
+
+            if len(bookings) > 1:
+                return {"ok": True, "message": "multiple_bookings", "bookings": bookings}
+
+            booking = bookings[0]
+            event_id = booking["id"]
+
+            original_dt = datetime.fromisoformat(booking["start"])
+
+            when_text = args.get("when")
+
+            parsed = dateparser.parse(
+                when_text,
+                settings={
+                    "TIMEZONE": str(TIMEZONE),
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "PREFER_DATES_FROM": "future",
+                },
+            )
+
+            if not parsed:
+                return {"ok": True, "message": "invalid_time"}
+
+            new_start = original_dt.replace(
+                hour=parsed.hour,
+                minute=parsed.minute,
+                second=0,
+                microsecond=0,
+            )
+
+            result = reschedule_booking(event_id, new_start)
+
+            return {
+                "ok": True,
+                "rescheduled": bool(result),
+            }
 
     except Exception as e:
         return {
