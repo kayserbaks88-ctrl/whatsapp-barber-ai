@@ -141,6 +141,9 @@ def _tool_defs() -> list[dict[str, Any]]:
 
 
 def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | None, user_message: str = "") -> dict:
+    print("🔥 TOOL NAME CALLED:", tool_name)
+    print("📦 ARGS:", args)
+    
     try:
         if tool_name == "show_services":
             return {
@@ -179,22 +182,23 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
         if tool_name == "book_appointment":
             barber = args["barber"]
             service = args["service"]
-            from dateparser import parse
+            import dateparser
 
-            when_text = args.get("when")  # AI version (fallback)
-
-            # 🔥 use user message instead (this is the fix)
             start_dt = dateparser.parse(
                 when_text,
                 settings={
                     "PREFER_DATES_FROM": "future",
-                    "RETURN_AS_TIMEZONE_AWARE": False,  # 🔥 critical
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "TIMEZONE": "Europe/London",
                 },
             )
-            from zoneinfo import ZoneInfo
 
-            start_dt = start_dt.replace(tzinfo=ZoneInfo("Europe/London"))
-            print("FINAL BOOKING TIME:", start_dt)
+            if not start_dt:
+                print("❌ FAILED TO PARSE TIME:", when_text)
+                return {"ok": False, "error": "invalid_time"}
+
+            print("🕒 FINAL DATETIME:", start_dt)
+            print("💈 BARBER:", barber)
             
             minutes = SERVICES[service]["minutes"]
             customer_name = (args.get("customer_name") or profile_name or "").strip() or "Customer"
@@ -358,13 +362,27 @@ Barbers:
 Services:
 {json.dumps(SERVICES, indent=2)}
 
+BOOKING RULE (STRICT):
+
+If the user message contains:
+- a service
+- a barber
+- a time
+
+You MUST call the function "book_appointment".
+
+DO NOT reply with a confirmation message unless the function has been called.
+
+If you respond without calling the function, that response is invalid.
+
 Rules:
 - Prefer natural conversation over rigid menus.
 - Only show the services menu if the user asks what is available, pricing/duration, or they are too vague.
 - If booking info is incomplete, ask only for the missing detail.
 - If the user wants to cancel or reschedule, first identify the booking clearly.
 - If there is exactly one upcoming booking and the user says "cancel it" or "move it", you may use that booking.
-- Always use tools for booking, listing, cancelling, rescheduling, or availability checks.
+- Always use tools for booking, listing, cancelling, rescheduling.
+- NEVER confirm a booking without calling the tool first.
 - Do not pretend a booking/cancel/reschedule succeeded unless the tool result says it succeeded.
 - For successful bookings, confirm barber, service, date, time, and include the calendar link if present.
 - For list_bookings results, summarise them neatly.
