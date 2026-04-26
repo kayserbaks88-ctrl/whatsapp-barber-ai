@@ -118,7 +118,7 @@ def _tool_defs() -> list[dict[str, Any]]:
                 "properties": {
                     "event_id": {"type": "string"},
                 },
-                "required": ["event_id"],
+                "required": [],
                 "additionalProperties": False,
             },
         },
@@ -130,9 +130,10 @@ def _tool_defs() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "event_id": {"type": "string"},
+                    "selection": {"type": "string"},
                     "when": {"type": "string"},
                 },
-                "required": ["event_id", "when"],
+                "required": ["when"],
                 "additionalProperties": False,
             },
         },
@@ -250,12 +251,28 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             bookings = list_bookings(phone)
 
             if not bookings:
-                return {"ok": True, "message": "No bookings found"}
+                return {"ok": False, "error": "no_bookings"}
 
+            # 👇 HANDLE MULTIPLE BOOKINGS PROPERLY
             if len(bookings) > 1:
-                return {"ok": True, "message": "multiple_bookings", "bookings": bookings}
+                selection = args.get("event_id") or args.get("selection")
 
-            booking = bookings[0]
+                if not selection:
+                    return {
+                        "ok": False,
+                        "error": "multiple_bookings",
+                        "bookings": bookings
+                    }
+
+                try:
+                    index = int(selection) - 1
+                    booking = bookings[index]
+                except:
+                    return {"ok": False, "error": "invalid_selection"}
+
+            else:
+                booking = bookings[0]
+
             event_id = booking["id"]
 
             original_dt = datetime.fromisoformat(booking["start"])
@@ -272,8 +289,9 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             )
 
             if not parsed:
-                return {"ok": True, "message": "invalid_time"}
+                return {"ok": False, "error": "invalid_time"}
 
+            # ✅ KEEP DATE, CHANGE TIME
             new_start = original_dt.replace(
                 hour=parsed.hour,
                 minute=parsed.minute,
@@ -284,11 +302,14 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             result = reschedule_booking(event_id, new_start)
 
             return {
-                "ok": True,
+                "ok": bool(result),
                 "rescheduled": bool(result),
+                "event_id": event_id,
+                "new_start": new_start.isoformat(),
             }
-
     except Exception as e:
+        print("TOOL ERROR:", tool_name, e)
+        
         return {
             "ok": False,
             "error": str(e),
@@ -306,6 +327,8 @@ def run_receptionist_agent(
     timezone_name: str,
 ) -> str:
     customer_name = (profile_name or "").strip()
+
+    session["last_user_message"] = user_message
 
     recent_history = session.get("history", [])[-12:]
     history_text = ""
