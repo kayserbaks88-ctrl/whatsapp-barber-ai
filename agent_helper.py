@@ -241,18 +241,18 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
             selection = args.get("selection") or args.get("event_id")
 
-            # ✅ If only 1 booking → auto select
+            # ✅ If only one booking → auto cancel
             if len(bookings) == 1:
                 booking = bookings[0]
 
-            # ✅ Multiple bookings → require selection
             else:
+                # Need user to choose
                 if not selection or not str(selection).isdigit():
                     session["pending_cancel"] = {"bookings": bookings}
                     return {
                         "ok": False,
                         "error": "multiple_bookings",
-                        "bookings": bookings
+                        "bookings": bookings,
                     }
 
                 index = int(selection) - 1
@@ -262,16 +262,13 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
                 booking = bookings[index]
 
-            # ✅ Cancel using event id
-            event_id = booking["id"]
-            result = cancel_booking(event_id)
-
+            result = cancel_booking(booking["id"])
             session.pop("pending_cancel", None)
 
             return {
                 "ok": bool(result),
                 "cancelled": bool(result),
-                "event_id": event_id,
+                "booking": booking,
             }
   
         if tool_name == "reschedule_customer_booking":
