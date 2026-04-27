@@ -235,33 +235,45 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
         if tool_name == "cancel_customer_booking":
             bookings = list_bookings(phone)
+
             if not bookings:
                 return {"ok": False, "error": "no_bookings"}
 
             selection = args.get("selection") or args.get("event_id")
 
-            if len(bookings) > 1:
+            # ✅ If only 1 booking → auto select
+            if len(bookings) == 1:
+                booking = bookings[0]
+
+            # ✅ Multiple bookings → require selection
+            else:
                 if not selection or not str(selection).isdigit():
                     session["pending_cancel"] = {"bookings": bookings}
-                    return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
+                    return {
+                        "ok": False,
+                        "error": "multiple_bookings",
+                        "bookings": bookings
+                    }
 
                 index = int(selection) - 1
+
                 if index < 0 or index >= len(bookings):
                     return {"ok": False, "error": "invalid_selection"}
 
                 booking = bookings[index]
-            else:
-                booking = bookings[0]
 
-            result = cancel_booking(booking["id"])
+            # ✅ Cancel using event id
+            event_id = booking["id"]
+            result = cancel_booking(event_id)
+
             session.pop("pending_cancel", None)
 
             return {
                 "ok": bool(result),
                 "cancelled": bool(result),
-                "booking": booking,
+                "event_id": event_id,
             }
-
+  
         if tool_name == "reschedule_customer_booking":
             bookings = list_bookings(phone)
             if not bookings:
