@@ -218,12 +218,6 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
             if not result or not result.get("id"):
                 return {"ok": False, "error": "booking_failed"}
-            
-            session["last_booking"] = {
-                "id": result["id"],
-                "barber": barber,
-                "service": service,
-            }
 
             customer["last_booking"] = {"barber": barber, "service": service}
             session.pop("pending_booking", None)
@@ -240,42 +234,24 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             return {"ok": True, "bookings": bookings}
 
         if tool_name == "cancel_customer_booking":
-
-            # 🔥 PRIORITY: cancel last interacted booking
-            last_booking = session.get("last_booking")
-
-            if last_booking:
-                result = cancel_booking(last_booking["id"])
-                session.pop("last_booking", None)
-
-                return {
-                    "ok": bool(result),
-                    "cancelled": bool(result),
-                    "booking": last_booking,
-                }
+            bookings = list_bookings(phone)
+            if not bookings:
+                return {"ok": False, "error": "no_bookings"}
 
             selection = args.get("selection") or args.get("event_id")
 
-            # ✅ If only one booking → auto cancel
-            if len(bookings) == 1:
-                booking = bookings[0]
-
-            else:
-                # Need user to choose
+            if len(bookings) > 1:
                 if not selection or not str(selection).isdigit():
                     session["pending_cancel"] = {"bookings": bookings}
-                    return {
-                        "ok": False,
-                        "error": "multiple_bookings",
-                        "bookings": bookings,
-                    }
+                    return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
 
                 index = int(selection) - 1
-
                 if index < 0 or index >= len(bookings):
                     return {"ok": False, "error": "invalid_selection"}
 
                 booking = bookings[index]
+            else:
+                booking = bookings[0]
 
             result = cancel_booking(booking["id"])
             session.pop("pending_cancel", None)
@@ -285,7 +261,7 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                 "cancelled": bool(result),
                 "booking": booking,
             }
-  
+
         if tool_name == "reschedule_customer_booking":
             bookings = list_bookings(phone)
             if not bookings:
@@ -325,13 +301,6 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
             result = reschedule_booking(booking["id"], new_start)
             session.pop("pending_reschedule", None)
-            
-            if result:
-                session["last_booking"] = {
-                    "id": booking["id"],
-                    "barber": booking.get("barber"),
-                    "service": booking.get("service"),
-                }
 
             return {
                 "ok": bool(result),
