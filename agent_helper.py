@@ -270,32 +270,21 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             when_text = args.get("when")
             selection = args.get("selection") or args.get("event_id")
 
-            # ✅ PRIORITY: use last booking
-            booking = session.get("last_booking")
+            if len(bookings) > 1:
+                if not selection or not str(selection).isdigit():
+                    session["pending_reschedule"] = {
+                        "when": when_text,
+                        "bookings": bookings,
+                    }
+                    return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
 
-            if booking:
-                # make sure it still exists in current bookings
-                booking_ids = [b["id"] for b in bookings]
-                if booking["id"] not in booking_ids:
-                    booking = None  # fallback if outdated
+                index = int(selection) - 1
+                if index < 0 or index >= len(bookings):
+                    return {"ok": False, "error": "invalid_selection"}
 
-            # fallback to old logic if no last booking
-            if not booking:
-                if len(bookings) > 1:
-                    if not selection or not str(selection).isdigit():
-                        session["pending_reschedule"] = {
-                            "when": when_text,
-                            "bookings": bookings,
-                        }
-                        return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
-
-                    index = int(selection) - 1
-                    if index < 0 or index >= len(bookings):
-                        return {"ok": False, "error": "invalid_selection"}
-
-                    booking = bookings[index]
-                else:
-                    booking = bookings[0]
+                booking = bookings[index]
+            else:
+                booking = bookings[0]
 
             original_dt = datetime.fromisoformat(booking["start"]).astimezone(TIMEZONE)
             parsed = _parse_when(when_text)
@@ -303,21 +292,14 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             if not parsed:
                 return {"ok": False, "error": "invalid_time"}
 
-            new_start = parsed.astimezone(TIMEZONE).replace(
+            new_start = original_dt.replace(
+                hour=parsed.hour,
+                minute=parsed.minute,
                 second=0,
                 microsecond=0,
             )
 
             result = reschedule_booking(booking["id"], new_start)
-
-            # ✅ UPDATE LAST BOOKING AFTER SUCCESS
-            if result:
-                session["last_booking"] = {
-                    "id": booking["id"],
-                    "barber": booking.get("barber"),
-                    "service": booking.get("service"),
-                }
-
             session.pop("pending_reschedule", None)
 
             return {
@@ -325,6 +307,7 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                 "rescheduled": bool(result),
                 "booking": result,
             }
+
         return {"ok": False, "error": f"Unknown tool: {tool_name}"}
 
     except Exception as e:
