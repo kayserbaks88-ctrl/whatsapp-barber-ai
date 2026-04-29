@@ -219,11 +219,8 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             if not result or not result.get("id"):
                 return {"ok": False, "error": "booking_failed"}
 
-            session["last_booking"] = {
-                "id": result["id"],   # 🔥 THIS IS CRITICAL
-                "barber": barber,
-                "service": service,
-            }
+            customer["last_booking"] = {"barber": barber, "service": service}
+            session.pop("pending_booking", None)
 
             return {
                 "ok": True,
