@@ -252,7 +252,13 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                 booking = bookings[index]
             else:
                 booking = bookings[0]
-
+            
+            if result:
+                session["last_booking"] = {
+                    "id": booking["id"],
+                    "barber": booking.get("barber"),
+                    "service": booking.get("service"),
+                }
             result = cancel_booking(booking["id"])
             session.pop("pending_cancel", None)
 
@@ -298,7 +304,12 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
                 second=0,
                 microsecond=0,
             )
-
+            if result:
+                session["last_booking"] = {
+                    "id": booking["id"],
+                    "barber": booking.get("barber"),
+                    "service": booking.get("service"),
+                }
             result = reschedule_booking(booking["id"], new_start)
             session.pop("pending_reschedule", None)
 
@@ -470,7 +481,11 @@ STRICT TOOL RULES:
 - If multiple bookings are returned, ask which booking by number.
 - If customer replies with a number, use that number as the selection.
 - If rescheduling, never create a new booking.
+- DO NOT confirm bookings unless the book_appointment tool has been called successfully.
 
+-  If the user provides a time and confirms, you MUST call the booking tool.
+
+-  Never say "you have an appointment" unless it is already stored in the system.
 Rules:
 - Prefer natural conversation over rigid menus.
 - Only show services menu if asked or if user is too vague.
