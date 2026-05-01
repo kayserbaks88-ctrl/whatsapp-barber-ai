@@ -53,14 +53,22 @@ def _is_reschedule_text(text: str) -> bool:
 
 
 def _parse_when(text: str):
-    return dateparser.parse(
+    now = datetime.now(TIMEZONE)
+
+    parsed = dateparser.parse(
         text,
         settings={
+            "RELATIVE_BASE": now,
             "PREFER_DATES_FROM": "future",
             "TIMEZONE": str(TIMEZONE),
-            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RETURN_AS_TIMEZONE_AWARE": False,
         },
     )
+
+    if not parsed:
+        return None
+
+    return parsed.replace(tzinfo=TIMEZONE)
 
 
 def _format_booking(b: dict, i: int | None = None) -> str:
