@@ -253,12 +253,14 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             else:
                 booking = bookings[0]
             
+            result = cancel_booking(booking["id"])
+
             if result:
                 session["last_booking"] = {
-                    "id": booking["id"],
-                    "barber": booking.get("barber"),
-                    "service": booking.get("service"),
-                }
+                   "id": booking["id"],
+                   "barber": booking.get("barber"),
+                   "service": booking.get("service"),
+            }
             result = cancel_booking(booking["id"])
             session.pop("pending_cancel", None)
 
@@ -298,12 +300,9 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             if not parsed:
                 return {"ok": False, "error": "invalid_time"}
 
-            new_start = original_dt.replace(
-                hour=parsed.hour,
-                minute=parsed.minute,
-                second=0,
-                microsecond=0,
-            )
+            new_start = parsed.astimezone(TIMEZONE)
+            result = reschedule_booking(booking["id"], new_start)
+
             if result:
                 session["last_booking"] = {
                     "id": booking["id"],
