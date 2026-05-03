@@ -53,15 +53,19 @@ def _is_reschedule_text(text: str) -> bool:
 
 
 def _parse_when(text: str):
-    return dateparser.parse(
+    dt = dateparser.parse(
         text,
         settings={
             "PREFER_DATES_FROM": "future",
-            "TIMEZONE": str(TIMEZONE),
-            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RETURN_AS_TIMEZONE_AWARE": False,  # 👈 KEY FIX
         },
     )
 
+    if not dt:
+        return None
+
+    # 👇 force correct timezone ONCE
+    return dt.replace(tzinfo=TIMEZONE)
 
 def _format_booking(b: dict, i: int | None = None) -> str:
     start = datetime.fromisoformat(b["start"]).astimezone(TIMEZONE)
@@ -219,9 +223,15 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             if not result or not result.get("id"):
                 return {"ok": False, "error": "booking_failed"}
 
-            customer["last_booking"] = {"barber": barber, "service": service}
-            session.pop("pending_booking", None)
+            session["last_booking"] = {
+               "id": result["id"],
+               "barber": barber,
+               "service": service,
+            }
 
+            session.pop("pending_booking", None)
+            customer["last_booking"] = {"barber": barber, "service": service}
+            
             return {
                 "ok": True,
                 "booking": result,
@@ -270,21 +280,31 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
             when_text = args.get("when")
             selection = args.get("selection") or args.get("event_id")
 
-            if len(bookings) > 1:
-                if not selection or not str(selection).isdigit():
-                    session["pending_reschedule"] = {
-                        "when": when_text,
-                        "bookings": bookings,
-                    }
-                    return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
+            booking = None
 
+            # ✅ First try the booking we were just talking about
+            last_booking = session.get("last_booking")
+            if last_booking and last_booking.get("id"):
+                booking = next((b for b in bookings if b["id"] == last_booking["id"]), None)
+
+            # ✅ If user picked a number
+            if not booking and selection and str(selection).isdigit():
                 index = int(selection) - 1
                 if index < 0 or index >= len(bookings):
                     return {"ok": False, "error": "invalid_selection"}
-
                 booking = bookings[index]
-            else:
+
+            # ✅ If only one booking
+            if not booking and len(bookings) == 1:
                 booking = bookings[0]
+
+            # ✅ If still unclear, ask which one
+            if not booking:
+                session["pending_reschedule"] = {
+                    "when": when_text,
+                    "bookings": bookings,
+                }
+                return {"ok": False, "error": "multiple_bookings", "bookings": bookings}
 
             original_dt = datetime.fromisoformat(booking["start"]).astimezone(TIMEZONE)
             parsed = _parse_when(when_text)
@@ -301,6 +321,13 @@ def _execute_tool(tool_name: str, args: dict, phone: str, profile_name: str | No
 
             result = reschedule_booking(booking["id"], new_start)
             session.pop("pending_reschedule", None)
+
+            if result:
+                session["last_booking"] = {
+                    "id": booking["id"],
+                    "barber": booking.get("barber"),
+                    "service": booking.get("service"),
+                }
 
             return {
                 "ok": bool(result),
