@@ -208,42 +208,60 @@ def reschedule_booking(event_id: str, new_start: datetime) -> dict | None:
             continue
 
         try:
-            event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-        except Exception:
+            # 🔥 GET the existing event FIRST
+            event = service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+
+            private = (event.get("extendedProperties", {}) or {}).get("private", {})
+
+            service_name = private.get("service", "haircut")
+            barber = private.get("barber", barber_key)
+
+            minutes = SERVICES.get(service_name, {}).get("minutes", 30)
+
+            # 🔥 NEW TIMES
+            start_dt = new_start.astimezone(TIMEZONE)
+            end_dt = start_dt + timedelta(minutes=minutes)
+
+            # 🔥 CHECK availability (VERY IMPORTANT)
+            if not is_free(start_dt, end_dt, barber, ignore_event_id=event_id):
+                return None
+
+            # 🔥 UPDATE event times
+            event["start"]["dateTime"] = start_dt.isoformat()
+            event["end"]["dateTime"] = end_dt.isoformat()
+
+            # 🔥 KEEP CLEAN summary + description
+            service_label = SERVICES.get(service_name, {}).get("label", service_name.title())
+            barber_name = BARBERS.get(barber, {}).get("name", barber.title())
+
+            event["summary"] = f"{service_label} - {private.get('customer_name', '')}"
+            event["description"] = (
+                f"Customer: {private.get('customer_name')}\n"
+                f"Phone: {private.get('phone')}\n"
+                f"Service: {service_label}\n"
+                f"Barber: {barber_name}"
+            )
+
+            updated = service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event
+            ).execute()
+
+            return {
+                "id": updated.get("id"),
+                "link": updated.get("htmlLink"),
+                "calendar_id": calendar_id,
+                "barber": barber,
+                "service": service_name,
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+            }
+
+        except Exception as e:
             continue
-
-        private = ((event.get("extendedProperties") or {}).get("private") or {})
-        service_name = private.get("service", "haircut")
-        barber = private.get("barber", barber_key)
-        minutes = SERVICES.get(service_name, {"minutes": 30})["minutes"]
-        new_end = new_start + timedelta(minutes=minutes)
-
-        if not is_free(new_start, new_end, barber, ignore_event_id=event_id):
-            raise ValueError("That new slot is not available")
-
-        event["start"] = {
-            "dateTime": new_start.astimezone(TIMEZONE).isoformat(),
-            "timeZone": str(TIMEZONE),
-        }
-        event["end"] = {
-            "dateTime": new_end.astimezone(TIMEZONE).isoformat(),
-            "timeZone": str(TIMEZONE),
-        }
-
-        updated = service.events().update(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body=event,
-        ).execute()
-
-        return {
-            "id": updated.get("id"),
-            "link": updated.get("htmlLink"),
-            "calendar_id": calendar_id,
-            "barber": barber,
-            "service": service_name,
-            "start": new_start.isoformat(),
-            "end": new_end.isoformat(),
-        }
 
     return None
